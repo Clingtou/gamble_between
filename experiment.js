@@ -891,7 +891,11 @@ function showDataPipeSaveFailure() {
 }
 
 function drawPaymentResult() {
-  const selectedIndex = secureRandomIndex(results.length);
+  // Pilot settlement always uses the +3/-8 trial, wherever it appears in the shuffled task.
+  const selectedIndex = trials.findIndex((trial) => trial.gain === 3 && trial.loss === 8);
+  if (selectedIndex === -1 || ![0, 1].includes(results[selectedIndex]?.Choice)) {
+    throw new Error("The +3/-8 settlement trial is missing or has not been answered.");
+  }
   const selectedTrial = trials[selectedIndex];
   const selectedRow = results[selectedIndex];
   const accepted = selectedRow.Choice === 1;
