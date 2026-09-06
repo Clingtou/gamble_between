@@ -325,12 +325,12 @@ function prepareResults() {
 
 function instructionImagePath() {
   const fontCondition = assignedCondition.gainLarge === 1 ? 1 : 2;
-  return `stimuli/stimuli_G7_L4_F${fontCondition}_P1.png`;
+  return `stimuli_G7_L4_F${fontCondition}_P1.png`;
 }
 
 function comprehensionImagePath() {
   const fontCondition = assignedCondition.gainLarge === 1 ? 1 : 2;
-  return `stimuli/stimuli_G5_L3_F${fontCondition}_P0.png`;
+  return `stimuli_G5_L3_F${fontCondition}_P0.png`;
 }
 
 function showInstructionPage(pageNumber, incorrectQuestions = []) {
