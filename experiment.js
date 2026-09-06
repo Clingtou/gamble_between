@@ -4,8 +4,9 @@
 // conditions in DataPipe: 0 = gain_larger, 1 = loss_larger.
 const DATAPIPE_EXPERIMENT_ID = "IYVU1vExfBFD";
 
-const INITIAL_ENDOWMENT = 45;
-const CENTS_PER_TOKEN = 5;
+const INITIAL_ENDOWMENT = 12;
+const CENTS_PER_TOKEN = 2;
+const PARTICIPATION_PAYMENT_CENTS = 200;
 const MIN_STRATEGY_WORDS = 20;
 const MIN_FULLSCREEN_WIDTH = 900;
 const MIN_FULLSCREEN_HEIGHT = 600;
@@ -23,9 +24,9 @@ const PRACTICE_TEMPLATE = [
 ];
 
 const TEXT = {
-  postComprehension: "You are about to begin the decision-making part of the study.\n\nOn the next page, the background will change to gray. You will only need the keyboard to complete the practice trials and the main task; you will not need a mouse or trackpad.\n\nWhen you are ready, press the Enter key to continue to the next page.",
+  postComprehension: "You are about to begin the formal study.\n\nOn the next page, the background will change to GRAY.\n\nYou will only need the keyboard to complete the practice trials and the main task;\nyou will not need a mouse or trackpad.\n\nWhen you are ready, press the “Space” key to continue to the next page.",
   practice: "You will now complete three practice trials.\n\nPractice trials will not be selected to determine your final payment.\n\n\nWhen you are ready, press the \"SPACEBAR\" to start the practice trials",
-  start: "Practice completed! The main task is about to begin.\n\nYour decision time will be recorded,\nso once the task begins, please do not get distracted.\nPlease stay focused until you finish the task.\n\nIf you are ready,\npress the \"Enter\" to start immediately."
+  start: "Practice completed! The main task is about to begin.\n\nYour decision time will be recorded,\nso once the task begins, please do not get distracted.\nPlease stay focused until you finish the task.\n\nIf you are ready,\npress the \"Space\" key to start immediately."
 };
 
 const screens = {
@@ -318,8 +319,14 @@ function prepareResults() {
     SelectedForPayment: 0,
     PaymentOutcome: "",
     FinalTokens: "",
+    BonusCents: "",
+    BonusDollars: "",
+    ParticipationPaymentCents: "",
+    ParticipationPaymentDollars: "",
     FinalCents: "",
     FinalDollars: "",
+    TotalPaymentCents: "",
+    TotalPaymentDollars: "",
     StudyStatus: ""
   }));
 }
@@ -342,7 +349,8 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
     showContent(`
       ${feedback}
       <h1>Instructions</h1>
-      <p>In this game, you will start with an initial endowment of <strong class="emphasis-red">45 tokens</strong>. At the end of the experiment, all the tokens you have earned will be converted into real cash at a rate of <strong class="emphasis-red">1 token = 5 cents</strong> <strong>(or $0.05)</strong>. In total, you will make approximately <strong class="emphasis-red">50 choices</strong>, deciding whether or not to participate in the gamble for each round.</p>
+      <p>In this game, you will make approximately <strong class="emphasis-red">50 choices</strong> about whether to accept or reject a gamble. You will receive a fixed participation payment of <strong>$2.00</strong> for completing the study and start with a bonus endowment of <strong class="emphasis-red">12 tokens</strong>. Your final token balance will be converted into cash at a rate of <strong class="emphasis-red">1 token = 2 cents</strong> <strong>(or $0.02)</strong>.</p>
+      <p>The tokens are used only to determine your bonus and will <strong class="emphasis-red">not</strong> reduce your fixed $2.00 participation payment. Your bonus will typically be around $0.24, making your total payment approximately <strong class="emphasis-red">$2.24 on average</strong>. The bonus will be paid separately through Connect within <strong class="emphasis-red">14 business days</strong> after you complete the study.</p>
       <p>As shown in the figure below, each gamble shows a possible gain, marked with a <strong>“ + ”</strong>, and a possible loss, marked with a <strong>“ - ”</strong>. For each gamble, you have two options: Accept or Reject. If you accept, you have a <strong class="emphasis-red">50%</strong> chance of gaining the number of tokens shown and a <strong class="emphasis-red">50%</strong> chance of losing the number shown. Press the <strong class="key-highlight">“↑”</strong> key to <strong class="key-highlight">accept</strong> the gamble, and press the <strong class="key-highlight">“↓”</strong> key to <strong class="key-highlight">reject</strong> it.</p>
       <p>Please note that the probabilities of winning and losing in each gamble are equal, both being <strong class="emphasis-red">50%</strong>.</p>
       <figure class="instruction-figure">
@@ -352,12 +360,12 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
       <p class="instruction-section-break">For example, suppose the “+7/−4” gamble shown above is selected:</p>
       <p>If you chose to <strong class="emphasis-red">“Accept”</strong>, the computer will simulate a fair coin toss:</p>
       <ul class="instruction-list">
-        <li>If the coin lands heads, <span class="instruction-underline">you will gain 7 tokens and receive 45 + 7 = 52 tokens = 260 cents ($2.60);</span></li>
-        <li>If the coin lands tails, <span class="instruction-underline">you will lose 4 tokens and receive 45 − 4 = 41 tokens = 205 cents ($2.05).</span></li>
+        <li>If the coin lands heads, <span class="instruction-underline">you will gain 7 tokens. Your final bonus balance will be 12 + 7 = 19 tokens, giving you a <strong>$0.38 bonus</strong> and <strong>$2.38 in total</strong>;</span></li>
+        <li>If the coin lands tails, <span class="instruction-underline">you will lose 4 tokens. Your final bonus balance will be 12 - 4 = 8 tokens, giving you a <strong>$0.16 bonus</strong> and <strong>$2.16 in total</strong>;</span></li>
       </ul>
       <p>If you chose to <strong class="emphasis-red">“Reject”</strong>, it will not be played.</p>
       <ul class="instruction-list">
-        <li><span class="instruction-underline">You will keep 45 tokens = 225 cents ($2.25).</span></li>
+        <li><span class="instruction-underline">You will keep 12 tokens, giving you a <strong>$0.24 bonus</strong> and <strong>$2.24 in total</strong>.</span></li>
       </ul>
       <p class="instruction-section-break">The gain and loss amounts will appear in <strong>different font sizes</strong>, and their <strong>left–right positions</strong> will vary randomly. However, these display formats are completely unrelated to the game rules and will not affect your final payout. There is <strong>no time limit</strong> for each choice.</p>
       <button id="instruction-next" class="content-button" type="button">Next</button>
@@ -370,7 +378,7 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
     <h1>Instructions</h1>
     <p>Before each gamble appears, a circular fixation point (as shown below) will be displayed in the center of the screen for a random period of 2–3 seconds. Please look at the fixation point without pressing any key. The gamble will then appear automatically.</p>
     <figure class="fixation-figure">
-      <div class="fixation-demo" role="img" aria-label="A white circular fixation point in the center of a gray background with a 4:3 aspect ratio.">
+      <div class="fixation-demo" role="img" aria-label="A white circular fixation point in the center of a gray background with a 16:9 aspect ratio.">
         <span class="fixation-demo-dot" aria-hidden="true"></span>
       </div>
     </figure>
@@ -418,10 +426,10 @@ function comprehensionQuestions() {
       text: "Suppose the gamble shown below is selected. If you chose “Reject”, what would your payment be?",
       exampleHtml: example,
       options: [
-        ["reject_keep", "You would keep 45 tokens, equivalent to 225 cents ($2.25)."],
-        ["reject_lose", "You would lose 3 tokens, leaving 42 tokens, equivalent to 210 cents ($2.10)."],
-        ["reject_gain", "You would gain 5 tokens, giving you 50 tokens, equivalent to 250 cents ($2.50)."],
-        ["reject_coin", "You would have a 50% chance of receiving 250 cents ($2.50) and a 50% chance of receiving 210 cents ($2.10)."]
+        ["reject_keep", "You keep 12 tokens and receive a $0.24 bonus."],
+        ["reject_lose", "You lose 3 tokens, leaving 9 tokens and a $0.18 bonus."],
+        ["reject_gain", "You gain 5 tokens, leaving 17 tokens and a $0.34 bonus."],
+        ["reject_coin", "You have a 50% chance of ending with 17 tokens ($0.34) and a 50% chance of ending with 9 tokens ($0.18)."]
       ],
       correct: "reject_keep"
     },
@@ -431,23 +439,24 @@ function comprehensionQuestions() {
       text: "Suppose the gamble shown below is selected. If you chose “Accept”, what would your payment be?",
       exampleHtml: example,
       options: [
-        ["accept_keep", "You would keep 45 tokens, equivalent to 225 cents ($2.25)."],
-        ["accept_lose", "You would lose 3 tokens, leaving 42 tokens, equivalent to 210 cents ($2.10)."],
-        ["accept_gain", "You would gain 5 tokens, giving you 50 tokens, equivalent to 250 cents ($2.50)."],
-        ["accept_coin", "You would have a 50% chance of receiving 250 cents ($2.50) and a 50% chance of receiving 210 cents ($2.10)."]
+        ["accept_keep", "You keep 12 tokens and receive a $0.24 bonus."],
+        ["accept_lose", "You lose 3 tokens, leaving 9 tokens and a $0.18 bonus."],
+        ["accept_gain", "You gain 5 tokens, leaving 17 tokens and a $0.34 bonus."],
+        ["accept_coin", "You have a 50% chance of ending with 17 tokens ($0.34) and a 50% chance of ending with 9 tokens ($0.18)."]
       ],
       correct: "accept_coin"
     },
     {
       number: 5,
-      name: "selection",
-      text: "Which trial is most likely to be selected for real payment?",
+      name: "incorrect_statement",
+      text: "Which of the following statements is incorrect?",
       options: [
-        ["reject_trial", "A trial in which you chose “Reject.”"],
-        ["accept_trial", "A trial in which you chose “Accept.”"],
-        ["equal_chance", "Every trial has an equal chance of being selected, regardless of your decision."]
+        ["equal_selection", "Every trial has an equal chance of being selected, regardless of whether you chose “Accept” or “Reject.”"],
+        ["bonus_only", "Your choices will not affect your fixed $2.00 participation payment; they will affect only your bonus."],
+        ["display_unrelated", "The font sizes and left–right positions of the amounts are unrelated to the game rules."],
+        ["press_during_fixation", "You should press a key while the fixation point is displayed to proceed to the gamble."]
       ],
-      correct: "equal_chance"
+      correct: "press_during_fixation"
     },
     {
       number: 6,
@@ -580,7 +589,7 @@ async function runTask() {
     if (aborted) return;
   }
 
-  if (!await messageAndWait(TEXT.start, ["Enter", "NumpadEnter"], "main-intro-message")) return;
+  if (!await messageAndWait(TEXT.start, ["Space"], "main-intro-message")) return;
 
   for (let i = 0; i < trials.length; i += 1) {
     await runTrial(trials[i], results[i]);
@@ -606,11 +615,12 @@ async function runTask() {
 }
 
 async function postComprehensionAndWait() {
-  showContent(`<div class="message post-comprehension-copy">${TEXT.postComprehension}</div>`, "post-comprehension-page");
+  const text = TEXT.postComprehension.replace("GRAY", '<span class="gray-highlight">GRAY</span>');
+  showContent(`<div class="message post-comprehension-copy">${text}</div>`, "post-comprehension-page");
   phase = "post_comprehension";
   await sleep(200);
   if (aborted) return false;
-  await waitForKey(["Enter", "NumpadEnter"]);
+  await waitForKey(["Space"]);
   return !aborted;
 }
 
@@ -724,7 +734,10 @@ function completeStudyAfterSave() {
   setStoredStudyStatus("completed", {
     selected_trial: paymentResult.trialNumber,
     final_tokens: paymentResult.finalTokens,
-    final_cents: paymentResult.finalCents
+    bonus_cents: paymentResult.bonusCents,
+    participation_payment_cents: paymentResult.participationPaymentCents,
+    final_cents: paymentResult.finalCents,
+    total_payment_cents: paymentResult.totalPaymentCents
   });
   showPaymentResult();
 }
@@ -781,6 +794,8 @@ function drawPaymentResult() {
     }
   }
 
+  const bonusCents = finalTokens * CENTS_PER_TOKEN;
+  const totalPaymentCents = PARTICIPATION_PAYMENT_CENTS + bonusCents;
   return {
     selectedIndex,
     trialNumber: selectedIndex + 1,
@@ -788,8 +803,15 @@ function drawPaymentResult() {
     accepted,
     outcome,
     finalTokens,
-    finalCents: finalTokens * CENTS_PER_TOKEN,
-    finalDollars: (finalTokens * CENTS_PER_TOKEN / 100).toFixed(2)
+    bonusCents,
+    bonusDollars: (bonusCents / 100).toFixed(2),
+    participationPaymentCents: PARTICIPATION_PAYMENT_CENTS,
+    participationPaymentDollars: (PARTICIPATION_PAYMENT_CENTS / 100).toFixed(2),
+    // Keep the existing final-token cash fields as the bonus for data compatibility.
+    finalCents: bonusCents,
+    finalDollars: (bonusCents / 100).toFixed(2),
+    totalPaymentCents,
+    totalPaymentDollars: (totalPaymentCents / 100).toFixed(2)
   };
 }
 
@@ -823,7 +845,10 @@ function showPaymentResult() {
     ${paymentGambleHtml(result.trial)}
     <div class="payment-summary">
       ${outcomeExplanation}
-      <p class="payment-total">Your payment is ${result.finalTokens} tokens = ${result.finalCents} cents ($${result.finalDollars}).</p>
+      <p>Your bonus is ${result.finalTokens} tokens = ${result.bonusCents} cents ($${result.bonusDollars}).</p>
+      <p>Your fixed participation payment is $${result.participationPaymentDollars}.</p>
+      <p class="payment-total">Your total payment is $${result.totalPaymentDollars}.</p>
+      <p>Your bonus will be paid separately through Connect within 14 business days after you complete the study.</p>
     </div>
     <button id="finish-study" class="content-button" type="button">Finish</button>
   `, "result-page");
@@ -848,8 +873,14 @@ function applySummaryToResults(status) {
     row.SelectedForPayment = paymentResult && index === paymentResult.selectedIndex ? 1 : 0;
     row.PaymentOutcome = paymentResult && index === paymentResult.selectedIndex ? paymentResult.outcome : "";
     row.FinalTokens = paymentResult && index === paymentResult.selectedIndex ? paymentResult.finalTokens : "";
+    row.BonusCents = paymentResult && index === paymentResult.selectedIndex ? paymentResult.bonusCents : "";
+    row.BonusDollars = paymentResult && index === paymentResult.selectedIndex ? paymentResult.bonusDollars : "";
+    row.ParticipationPaymentCents = paymentResult && index === paymentResult.selectedIndex ? paymentResult.participationPaymentCents : "";
+    row.ParticipationPaymentDollars = paymentResult && index === paymentResult.selectedIndex ? paymentResult.participationPaymentDollars : "";
     row.FinalCents = paymentResult && index === paymentResult.selectedIndex ? paymentResult.finalCents : "";
     row.FinalDollars = paymentResult && index === paymentResult.selectedIndex ? paymentResult.finalDollars : "";
+    row.TotalPaymentCents = paymentResult && index === paymentResult.selectedIndex ? paymentResult.totalPaymentCents : "";
+    row.TotalPaymentDollars = paymentResult && index === paymentResult.selectedIndex ? paymentResult.totalPaymentDollars : "";
     row.StudyStatus = status;
   });
 }
@@ -885,8 +916,14 @@ function summaryOnlyRow(status) {
     SelectedForPayment: "",
     PaymentOutcome: "",
     FinalTokens: "",
+    BonusCents: "",
+    BonusDollars: "",
+    ParticipationPaymentCents: "",
+    ParticipationPaymentDollars: "",
     FinalCents: "",
     FinalDollars: "",
+    TotalPaymentCents: "",
+    TotalPaymentDollars: "",
     StudyStatus: status
   };
 }
@@ -1123,7 +1160,7 @@ document.addEventListener("keydown", (event) => {
   if (phase === "response" && ["ArrowUp", "ArrowDown"].includes(event.code)) {
     event.preventDefault();
     settleActiveWait(event.code);
-  } else if (["message", "practice_intro", "post_comprehension"].includes(phase) && ["Space", "Enter", "NumpadEnter"].includes(event.code)) {
+  } else if (["message", "practice_intro", "post_comprehension"].includes(phase) && event.code === "Space") {
     event.preventDefault();
     settleActiveWait(event.code);
   }
