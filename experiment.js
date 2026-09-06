@@ -75,6 +75,7 @@ let pageIsUnloading = false;
 let fullscreenExitTimer = null;
 let dataDownloaded = false;
 let dataPipeSaved = false;
+let dataPipeSaveError = null;
 
 function randomId(length) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -595,10 +596,9 @@ async function runTask() {
   paymentResult = drawPaymentResult();
   applySummaryToResults("completed");
   showContent("<h2>Saving your data...</h2><p>Please do not close this page.</p>", "loading-page");
-  downloadData("completed");
   const savedToPipe = await saveToDataPipe("completed");
   if (aborted) return;
-  if (isDataPipeConfigured() && !savedToPipe) {
+  if (!savedToPipe) {
     showDataPipeSaveFailure();
     return;
   }
@@ -732,10 +732,23 @@ function completeStudyAfterSave() {
 function showDataPipeSaveFailure() {
   showContent(`
     <h1>Data could not be saved online.</h1>
-    <div class="termination-warning"><strong>Please check your internet connection and try again.</strong><p>A local CSV copy has already been downloaded as a backup. Do not close this page.</p></div>
+    <div class="termination-warning"><strong>Your responses have not yet been saved online.</strong><p>Please keep this page open and select Retry. You can also download a backup copy if needed.</p><p id="save-error-detail" role="status"></p></div>
     <button id="retry-save" class="content-button" type="button">Retry</button>
+    <button id="download-backup" class="content-button" type="button">Download a backup copy</button>
   `, "end-page");
   phase = "save_error";
+  if (dataPipeSaveError) {
+    document.getElementById("save-error-detail").textContent = `Save error: ${dataPipeSaveError.code}. ${dataPipeSaveError.message}`;
+  }
+  const backupButton = document.getElementById("download-backup");
+  backupButton.disabled = dataDownloaded;
+  if (dataDownloaded) backupButton.textContent = "Backup downloaded";
+  backupButton.addEventListener("click", () => {
+    if (aborted || phase !== "save_error") return;
+    downloadData("completed");
+    backupButton.disabled = true;
+    backupButton.textContent = "Backup downloaded";
+  });
   document.getElementById("retry-save").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     button.disabled = true;
@@ -916,29 +929,46 @@ function downloadData(status) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function downloadPartialDataIfAvailable(status) {
-  const hasFormalChoice = results.some((row) => row.Choice === 0 || row.Choice === 1);
-  if (hasFormalChoice) downloadData(status);
-}
-
 async function saveToDataPipe(status) {
-  if (!isDataPipeConfigured() || dataPipeSaved) return false;
+  if (dataPipeSaved) return true;
+  dataPipeSaveError = null;
+  if (!isDataPipeConfigured()) {
+    dataPipeSaveError = { code: "DATAPIPE_NOT_CONFIGURED", message: "The study's online data storage has not been configured. Please contact the researcher." };
+    return false;
+  }
+
+  const requestBody = JSON.stringify({
+    experimentID: DATAPIPE_EXPERIMENT_ID,
+    filename: dataFilename,
+    data: buildCsv(status)
+  });
+  const requestBytes = new Blob([requestBody]).size;
   try {
     const response = await fetch("https://pipe.jspsych.org/api/data/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        experimentID: DATAPIPE_EXPERIMENT_ID,
-        filename: dataFilename,
-        data: buildCsv(status)
-      }),
-      keepalive: true
+      body: requestBody,
+      // Completed data can exceed the browser's 64 KiB keepalive quota.
+      // Small termination reports may still continue after the page closes.
+      keepalive: status !== "completed" && requestBytes < 64 * 1024
     });
-    if (!response.ok) throw new Error(`DataPipe save failed (${response.status}).`);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || payload?.error || payload?.message !== "Success") {
+      dataPipeSaveError = {
+        code: String(payload?.error || (response.ok ? "UNEXPECTED_RESPONSE" : `HTTP_${response.status}`)),
+        message: typeof payload?.message === "string" ? payload.message : "The server did not confirm that your data were saved. Please retry or contact the researcher."
+      };
+      console.error("DataPipe save was not confirmed.", { ...dataPipeSaveError, httpStatus: response.status, requestBytes });
+      return false;
+    }
     dataPipeSaved = true;
     return true;
   } catch (error) {
-    console.error("DataPipe save failed; the local CSV remains available.", error);
+    dataPipeSaveError = {
+      code: "NETWORK_ERROR",
+      message: "The upload could not be completed. Please check your connection and select Retry."
+    };
+    console.error("DataPipe upload failed.", { ...dataPipeSaveError, requestBytes, error });
     return false;
   }
 }
@@ -950,7 +980,6 @@ function excludeForComprehension(incorrectQuestions) {
     incorrect_questions: incorrectQuestions.join("|")
   });
   applySummaryToResults("excluded_comprehension");
-  downloadPartialDataIfAvailable("excluded_comprehension");
   void saveToDataPipe("excluded_comprehension");
   showContent(`
     <h1>The study has ended.</h1>
@@ -1029,9 +1058,8 @@ function handleUnexpectedError(error) {
   aborted = true;
   setStoredStudyStatus("technical_error");
   applySummaryToResults("technical_error");
-  downloadPartialDataIfAvailable("technical_error");
   void saveToDataPipe("technical_error");
-  showContent("<h1>The study has ended.</h1><div class=\"termination-warning\"><strong>The experiment stopped because of an unexpected error.</strong></div><p>Available data have been saved.</p>", "end-page");
+  showContent("<h1>The study has ended.</h1><div class=\"termination-warning\"><strong>The experiment stopped because of an unexpected error.</strong></div><p>Please keep this page open while we attempt to save your data online.</p>", "end-page");
   phase = "terminated";
 }
 
