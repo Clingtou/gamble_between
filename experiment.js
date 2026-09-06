@@ -7,7 +7,7 @@ const DATAPIPE_EXPERIMENT_ID = "IYVU1vExfBFD";
 const INITIAL_ENDOWMENT = 12;
 const CENTS_PER_TOKEN = 2;
 const PARTICIPATION_PAYMENT_CENTS = 200;
-const MIN_STRATEGY_WORDS = 20;
+const MIN_STRATEGY_WORDS = 30;
 const MIN_FULLSCREEN_WIDTH = 900;
 const MIN_FULLSCREEN_HEIGHT = 600;
 const experimentStartPerf = performance.now();
@@ -24,9 +24,9 @@ const PRACTICE_TEMPLATE = [
 ];
 
 const TEXT = {
-  postComprehension: "You are about to begin the formal study.\n\nOn the next page, the background will change to GRAY.\n\nYou will only need the keyboard to complete the practice trials and the main task;\nyou will not need a mouse or trackpad.\n\nWhen you are ready, press the “Space” key to continue to the next page.",
-  practice: "You will now complete three practice trials.\n\nPractice trials will not be selected to determine your final payment.\n\n\nWhen you are ready, press the \"SPACEBAR\" to start the practice trials",
-  start: "Practice completed! The main task is about to begin.\n\nYour decision time will be recorded,\nso once the task begins, please do not get distracted.\nPlease stay focused until you finish the task.\n\nIf you are ready,\npress the \"Space\" key to start immediately."
+  postComprehension: "You are now ready to begin the decision task.\n\nIt will start with three practice trials on a GRAY background.\nDuring the practice trials and main task,\nuse only the keyboard; do not use a mouse or trackpad.\n\nPress the “SPACEBAR” when you are ready to continue.",
+  practice: "You will now complete three practice trials.\nThese trials will not affect your bonus.\n\nPress ↑ to accept and ↓ to reject.\n\nPress the “SPACEBAR” when you are ready to continue.",
+  start: "Practice completed! The main task is about to begin.\n\nYour decision time will be recorded,\nso once the task begins, please do not get distracted.\nPlease stay focused until you finish the task.\n\nIf you are ready,\npress the \"SPACEBAR\" to start immediately."
 };
 
 const screens = {
@@ -62,6 +62,7 @@ let comprehensionPassed = false;
 let comprehensionRecords = [];
 let postTaskResponses = {
   fontSizeRating: "",
+  familiarityRating: "",
   decisionStrategy: "",
   strategyWordCount: 0,
   completed: false
@@ -313,6 +314,7 @@ function prepareResults() {
     ComprehensionIncorrectItems: "",
     ComprehensionResponseJSON: "",
     PostTaskFontSizeRating: "",
+    PostTaskFamiliarityRating: "",
     PostTaskDecisionStrategy: "",
     PostTaskStrategyWordCount: 0,
     PostTaskCompleted: 0,
@@ -356,7 +358,19 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
       <figure class="instruction-figure">
         <img src="${instructionImagePath()}" alt="Example gamble showing a possible gain of 7 tokens and a possible loss of 4 tokens.">
       </figure>
+      <button id="instruction-next" class="content-button" type="button">Next</button>
+    `, "instruction-page");
+    document.getElementById("instruction-next").addEventListener("click", () => showInstructionPage(2));
+    return;
+  }
+
+  if (pageNumber === 2) {
+    showContent(`
+      <h1>Instructions</h1>
       <p>Your decisions will be recorded but not carried out immediately. After all rounds are completed, the computer will <strong>randomly select <span class="emphasis-red">one round</span></strong> to determine your payment.</p>
+      <figure class="instruction-figure instruction-figure-small">
+        <img src="${instructionImagePath()}" alt="Example gamble showing a possible gain of 7 tokens and a possible loss of 4 tokens.">
+      </figure>
       <p class="instruction-section-break">For example, suppose the “+7/−4” gamble shown above is selected:</p>
       <p>If you chose to <strong class="emphasis-red">“Accept”</strong>, the computer will simulate a fair coin toss:</p>
       <ul class="instruction-list">
@@ -368,9 +382,13 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
         <li><span class="instruction-underline">You will keep 12 tokens, giving you a <strong>$0.24 bonus</strong> and <strong>$2.24 in total</strong>.</span></li>
       </ul>
       <p class="instruction-section-break">The gain and loss amounts will appear in <strong>different font sizes</strong>, and their <strong>left–right positions</strong> will vary randomly. However, these display formats are completely unrelated to the game rules and will not affect your final payout. There is <strong>no time limit</strong> for each choice.</p>
-      <button id="instruction-next" class="content-button" type="button">Next</button>
+      <div class="instruction-navigation">
+        <button id="instruction-back" class="content-button secondary-button" type="button">Back</button>
+        <button id="instruction-next" class="content-button" type="button">Next</button>
+      </div>
     `, "instruction-page");
-    document.getElementById("instruction-next").addEventListener("click", () => showInstructionPage(2));
+    document.getElementById("instruction-back").addEventListener("click", () => showInstructionPage(1));
+    document.getElementById("instruction-next").addEventListener("click", () => showInstructionPage(3));
     return;
   }
 
@@ -378,9 +396,10 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
     <h1>Instructions</h1>
     <p>Before each gamble appears, a circular fixation point (as shown below) will be displayed in the center of the screen for a random period of 2–3 seconds. Please look at the fixation point without pressing any key. The gamble will then appear automatically.</p>
     <figure class="fixation-figure">
-      <div class="fixation-demo" role="img" aria-label="A white circular fixation point in the center of a gray background with a 16:9 aspect ratio.">
-        <span class="fixation-demo-dot" aria-hidden="true"></span>
-      </div>
+      <svg class="fixation-demo" xmlns="http://www.w3.org/2000/svg" width="400" height="225" viewBox="0 0 400 225" role="img" aria-label="A white circular fixation point in the center of a gray background with a 16:9 aspect ratio.">
+        <rect width="400" height="225" fill="rgb(128, 128, 128)" />
+        <circle cx="200" cy="112.5" r="3.2" fill="rgb(255, 255, 255)" />
+      </svg>
     </figure>
     <p>To reiterate:</p>
     <ol class="reiteration-list">
@@ -393,7 +412,7 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
       <button id="comprehension-next" class="content-button" type="button">Next</button>
     </div>
   `, "instruction-page");
-  document.getElementById("instruction-back").addEventListener("click", () => showInstructionPage(1));
+  document.getElementById("instruction-back").addEventListener("click", () => showInstructionPage(2));
   document.getElementById("comprehension-next").addEventListener("click", showComprehensionTest);
 }
 
@@ -450,6 +469,7 @@ function comprehensionQuestions() {
       number: 5,
       name: "incorrect_statement",
       text: "Which of the following statements is incorrect?",
+      textHtml: 'Which of the following statements is <span class="emphasis-red">incorrect</span>?',
       options: [
         ["equal_selection", "Every trial has an equal chance of being selected, regardless of whether you chose “Accept” or “Reject.”"],
         ["bonus_only", "Your choices will not affect your fixed $2.00 participation payment; they will affect only your bonus."],
@@ -479,7 +499,7 @@ function showComprehensionTest() {
       <p class="comprehension-intro">Please answer the following questions to confirm your understanding of the game.</p>
       ${questions.map((question) => `
         <div class="form-question">
-          <div class="question-text">${question.number}. ${question.text}</div>
+          <div class="question-text">${question.number}. ${question.textHtml || question.text}</div>
           ${question.exampleHtml || ""}
           <div class="single-choice-list" role="radiogroup" aria-label="Question ${question.number}">
             ${question.options.map(([value, label]) => `
@@ -627,10 +647,9 @@ async function postComprehensionAndWait() {
 async function practiceInstructionAndWait() {
   showContent(`
     <div class="practice-intro-copy">
-      <p>You will now complete three practice trials.</p>
-      <p>Practice trials will not be selected to determine your final payment.</p>
-      <p>Press the “↑” key to accept the gamble.<br>Press the “↓” key to reject it.</p>
-      <p>When you are ready, press the "SPACEBAR" to start the practice trials</p>
+      <p>You will now complete three practice trials.<br>These trials will not affect your bonus.</p>
+      <p>Press <strong>↑</strong> to accept and <strong>↓</strong> to reject.</p>
+      <p>Press the “SPACEBAR” when you are ready to continue.</p>
     </div>
   `, "practice-intro-page");
   phase = "practice_intro";
@@ -641,13 +660,13 @@ async function practiceInstructionAndWait() {
 }
 
 function countStrategyWords(text) {
-  return (text.match(/[A-Za-z]+(?:['’\-][A-Za-z]+)*/g) || []).length;
+  return (text.match(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu) || []).length;
 }
 
 async function postTaskQuestionsAndWait() {
   showContent(`
-    <h1>Two brief questions</h1>
-    <p>Before we show your payment result, please answer two brief questions.</p>
+    <h1>Three brief questions</h1>
+    <p>Before we show your payment result, please answer three brief questions.</p>
     <form id="post-task-form" novalidate>
       <div class="form-question">
         <div id="font-size-question" class="question-text">1. In the gamble task you just completed, the potential gain and potential loss were presented in different font sizes. To what extent did the amount shown in the larger font appear numerically larger than the amount shown in the smaller font?</div>
@@ -666,8 +685,24 @@ async function postTaskQuestionsAndWait() {
         <div id="font-size-required" class="question-required" role="alert">Please select a response from 1 to 7.</div>
       </div>
       <div class="form-question">
-        <div class="question-text"><label for="decision-strategy">2. What strategy did you use when deciding whether to accept or reject the gambles?</label></div>
-        <p id="strategy-instruction">Please describe your strategy in at least ${MIN_STRATEGY_WORDS} English words.</p>
+        <div id="familiarity-question" class="question-text">2. How familiar are you with today's experimental task?</div>
+        <p id="familiarity-scale-description">Please respond on a scale from 1 to 7 (1 = not at all familiar, 7 = very familiar).</p>
+        <div class="post-task-scale" role="radiogroup" aria-labelledby="familiarity-question" aria-describedby="familiarity-scale-description familiarity-required" aria-required="true">
+          <div class="post-task-scale-anchors" aria-hidden="true"><span>Not at all familiar</span><span>Very familiar</span></div>
+          <div class="post-task-scale-options">
+            ${[1, 2, 3, 4, 5, 6, 7].map((rating) => `
+              <label class="post-task-scale-option">
+                <input type="radio" name="familiarity_rating" value="${rating}" required aria-label="${rating}${rating === 1 ? ' — Not at all familiar' : rating === 7 ? ' — Very familiar' : ''}">
+                <span>${rating}</span>
+              </label>
+            `).join("")}
+          </div>
+        </div>
+        <div id="familiarity-required" class="question-required" role="alert">Please select a response from 1 to 7.</div>
+      </div>
+      <div class="form-question">
+        <div class="question-text"><label for="decision-strategy">3. What strategy did you use when deciding whether to accept or reject the gambles?</label></div>
+        <p id="strategy-instruction">Please describe your strategy in at least ${MIN_STRATEGY_WORDS} words.</p>
         <textarea id="decision-strategy" class="post-task-strategy" name="decision_strategy" rows="6" required aria-describedby="strategy-instruction strategy-word-count strategy-required"></textarea>
         <p id="strategy-word-count" class="post-task-word-count" aria-live="polite">0 words (minimum: ${MIN_STRATEGY_WORDS})</p>
         <div id="strategy-required" class="question-required" role="alert">Please write at least ${MIN_STRATEGY_WORDS} words before continuing.</div>
@@ -681,16 +716,22 @@ async function postTaskQuestionsAndWait() {
   const strategyInput = document.getElementById("decision-strategy");
   const wordCountElement = document.getElementById("strategy-word-count");
   const ratingWarning = document.getElementById("font-size-required");
+  const familiarityWarning = document.getElementById("familiarity-required");
   const strategyWarning = document.getElementById("strategy-required");
   const submitButton = document.getElementById("post-task-submit");
   const captureResponses = () => {
     const selectedRating = form.querySelector('input[name="font_size_rating"]:checked');
     postTaskResponses.fontSizeRating = selectedRating ? Number(selectedRating.value) : "";
+    const selectedFamiliarity = form.querySelector('input[name="familiarity_rating"]:checked');
+    postTaskResponses.familiarityRating = selectedFamiliarity ? Number(selectedFamiliarity.value) : "";
     postTaskResponses.decisionStrategy = strategyInput.value.trim();
     postTaskResponses.strategyWordCount = countStrategyWords(postTaskResponses.decisionStrategy);
     wordCountElement.textContent = `${postTaskResponses.strategyWordCount} words (minimum: ${MIN_STRATEGY_WORDS})`;
     if (Number.isInteger(postTaskResponses.fontSizeRating) && postTaskResponses.fontSizeRating >= 1 && postTaskResponses.fontSizeRating <= 7) {
       ratingWarning.style.display = "none";
+    }
+    if (Number.isInteger(postTaskResponses.familiarityRating) && postTaskResponses.familiarityRating >= 1 && postTaskResponses.familiarityRating <= 7) {
+      familiarityWarning.style.display = "none";
     }
     if (postTaskResponses.strategyWordCount >= MIN_STRATEGY_WORDS) {
       strategyWarning.style.display = "none";
@@ -711,12 +752,15 @@ async function postTaskQuestionsAndWait() {
       if (aborted || phase !== "post_task_questions" || postTaskResponses.completed) return;
       captureResponses();
       const validRating = Number.isInteger(postTaskResponses.fontSizeRating) && postTaskResponses.fontSizeRating >= 1 && postTaskResponses.fontSizeRating <= 7;
+      const validFamiliarity = Number.isInteger(postTaskResponses.familiarityRating) && postTaskResponses.familiarityRating >= 1 && postTaskResponses.familiarityRating <= 7;
       const validStrategy = postTaskResponses.strategyWordCount >= MIN_STRATEGY_WORDS;
       ratingWarning.style.display = validRating ? "none" : "block";
+      familiarityWarning.style.display = validFamiliarity ? "none" : "block";
       strategyWarning.style.display = validStrategy ? "none" : "block";
       strategyInput.setAttribute("aria-invalid", String(!validStrategy));
-      if (!validRating || !validStrategy) {
+      if (!validRating || !validFamiliarity || !validStrategy) {
         if (!validRating) form.querySelector('input[name="font_size_rating"]').focus();
+        else if (!validFamiliarity) form.querySelector('input[name="familiarity_rating"]').focus();
         else strategyInput.focus();
         return;
       }
@@ -743,9 +787,13 @@ function completeStudyAfterSave() {
 }
 
 function showDataPipeSaveFailure() {
+  const validationRejected = dataPipeSaveError?.code === "INVALID_DATA";
+  const recoveryMessage = validationRejected
+    ? "Please keep this page open and contact the researcher. The study's online storage rejected the data. Select Retry after the researcher has corrected the storage validation settings. You can also download a backup copy if needed."
+    : "Please keep this page open and select Retry. You can also download a backup copy if needed.";
   showContent(`
     <h1>Data could not be saved online.</h1>
-    <div class="termination-warning"><strong>Your responses have not yet been saved online.</strong><p>Please keep this page open and select Retry. You can also download a backup copy if needed.</p><p id="save-error-detail" role="status"></p></div>
+    <div class="termination-warning"><strong>Your responses have not yet been saved online.</strong><p>${recoveryMessage}</p><p id="save-error-detail" role="status"></p></div>
     <button id="retry-save" class="content-button" type="button">Retry</button>
     <button id="download-backup" class="content-button" type="button">Download a backup copy</button>
   `, "end-page");
@@ -848,7 +896,7 @@ function showPaymentResult() {
       <p>Your bonus is ${result.finalTokens} tokens = ${result.bonusCents} cents ($${result.bonusDollars}).</p>
       <p>Your fixed participation payment is $${result.participationPaymentDollars}.</p>
       <p class="payment-total">Your total payment is $${result.totalPaymentDollars}.</p>
-      <p>Your bonus will be paid separately through Connect within 14 business days after you complete the study.</p>
+      <p>Your bonus will be paid separately through Connect within <strong>14 business days</strong> after you complete the study.</p>
     </div>
     <button id="finish-study" class="content-button" type="button">Finish</button>
   `, "result-page");
@@ -867,6 +915,7 @@ function applySummaryToResults(status) {
     row.ComprehensionIncorrectItems = incorrectItems;
     row.ComprehensionResponseJSON = responseJson;
     row.PostTaskFontSizeRating = postTaskResponses.fontSizeRating;
+    row.PostTaskFamiliarityRating = postTaskResponses.familiarityRating;
     row.PostTaskDecisionStrategy = postTaskResponses.decisionStrategy;
     row.PostTaskStrategyWordCount = postTaskResponses.strategyWordCount;
     row.PostTaskCompleted = postTaskResponses.completed ? 1 : 0;
@@ -910,6 +959,7 @@ function summaryOnlyRow(status) {
     ComprehensionIncorrectItems: comprehensionRecords.map((record) => `attempt${record.attempt}:${record.incorrect.join("|") || "none"}`).join(";"),
     ComprehensionResponseJSON: JSON.stringify(comprehensionRecords),
     PostTaskFontSizeRating: postTaskResponses.fontSizeRating,
+    PostTaskFamiliarityRating: postTaskResponses.familiarityRating,
     PostTaskDecisionStrategy: postTaskResponses.decisionStrategy,
     PostTaskStrategyWordCount: postTaskResponses.strategyWordCount,
     PostTaskCompleted: postTaskResponses.completed ? 1 : 0,
@@ -996,6 +1046,17 @@ async function saveToDataPipe(status) {
         message: typeof payload?.message === "string" ? payload.message : "The server did not confirm that your data were saved. Please retry or contact the researcher."
       };
       console.error("DataPipe save was not confirmed.", { ...dataPipeSaveError, httpStatus: response.status, requestBytes });
+      if (dataPipeSaveError.code === "INVALID_DATA") {
+        // DataPipe validates the file contents, not the surrounding JSON request.
+        // Compare these column names with Required Fields in the dashboard.
+        // Do not log participant responses or silently bypass server validation.
+        const rows = exportRows(status);
+        console.error("Check this experiment's Data Validation settings: the file format is CSV; every required field must match an exported column (including case).", {
+          format: "CSV",
+          rowCount: rows.length,
+          columns: Object.keys(rows[0])
+        });
+      }
       return false;
     }
     dataPipeSaved = true;

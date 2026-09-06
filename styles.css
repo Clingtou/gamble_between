@@ -1,6 +1,6 @@
 :root {
   --task-background: rgb(128, 128, 128);
-  --task-instruction: rgb(255, 255, 255);
+  --task-instruction: rgb(0, 0, 0);
   --task-stimulus: rgb(255, 255, 255);
   --instruction-image-width: 504px;
   --page-background: #ffffff;
@@ -167,6 +167,31 @@ input {
   margin: 0 0 18px;
 }
 
+.instruction-page {
+  font-size: 20px;
+}
+
+.instruction-page h1 {
+  margin-bottom: 29px;
+  font-size: 34px;
+}
+
+.instruction-page p {
+  margin-bottom: 20px;
+}
+
+.instruction-page .instruction-list {
+  margin-bottom: 27px;
+}
+
+.instruction-page .instruction-list li {
+  margin: 11px 0;
+}
+
+.instruction-page .reiteration-list li {
+  margin: 20px 0;
+}
+
 .instruction-figure,
 .quiz-figure {
   margin: 24px auto 28px;
@@ -178,6 +203,10 @@ input {
   width: min(var(--instruction-image-width), 100%);
   height: auto;
   margin: 0 auto;
+}
+
+.instruction-figure-small img {
+  width: min(400px, 100%);
 }
 
 .quiz-figure img {
@@ -212,19 +241,11 @@ input {
 }
 
 .fixation-demo {
-  display: grid;
-  width: min(var(--instruction-image-width), 100%);
-  aspect-ratio: 4 / 3;
+  display: block;
+  width: min(400px, 100%);
+  height: auto;
+  aspect-ratio: 16 / 9;
   margin: 0 auto;
-  place-items: center;
-  background: rgb(128, 128, 128);
-}
-
-.fixation-demo-dot {
-  width: 1.6%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: rgb(255, 255, 255);
 }
 
 .key-highlight {
@@ -478,6 +499,16 @@ input:focus-visible {
 .message.post-comprehension-copy {
   width: 100%;
   color: var(--page-text);
+}
+
+.gray-highlight {
+  display: inline-block;
+  padding: 0.05em 0.2em;
+  background: var(--task-background);
+  color: var(--task-stimulus);
+  font-size: 1.1em;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .fixation-dot {
