@@ -57,12 +57,14 @@ const dataFilename = `${safeFilename(subjectId)}_${safeFilename(sessionId)}_${Da
 let assignedCondition = null;
 let trials = [];
 let results = [];
+let practiceResults = [];
 let comprehensionAttempts = 0;
 let comprehensionPassed = false;
 let comprehensionRecords = [];
 let postTaskResponses = {
+  riskWillingness: "",
   fontSizeRating: "",
-  familiarityRating: "",
+  familiarity: "",
   decisionStrategy: "",
   strategyWordCount: 0,
   completed: false
@@ -78,6 +80,164 @@ let fullscreenExitTimer = null;
 let dataDownloaded = false;
 let dataPipeSaved = false;
 let dataPipeSaveError = null;
+// Activity is collected only inside this experiment document, until Finish.
+// Browser-delivered movement events are retained without application throttling.
+const pageVisits = [];
+let currentPageVisit = null;
+let activitySequence = 0;
+let activityStopped = false;
+let mainSavedPageCount = 0;
+let completionDataSaved = false;
+let completionSavePending = false;
+let uploadQueue = Promise.resolve();
+const experimentStartUtc = Date.now() - (performance.now() - experimentStartPerf);
+const heldKeys = new Map();
+
+function elapsedMilliseconds() {
+  return Math.round((performance.now() - experimentStartPerf) * 1000) / 1000;
+}
+
+function closePageVisit(reason = "page_change") {
+  if (!currentPageVisit || currentPageVisit.end !== null) return;
+  const now = elapsedMilliseconds();
+  if (currentPageVisit.visibleSince !== null) currentPageVisit.visibleMs += now - currentPageVisit.visibleSince;
+  currentPageVisit.visibleSince = null;
+  currentPageVisit.end = now;
+  currentPageVisit.endReason = reason;
+}
+
+function startPageVisit(screen, details = {}) {
+  if (activityStopped) return;
+  closePageVisit();
+  const now = elapsedMilliseconds();
+  const pageName = details.pageName || screen;
+  currentPageVisit = {
+    id: pageVisits.length + 1, screen, pageName, start: now, end: null,
+    visitNumber: pageVisits.filter((page) => page.pageName === pageName).length + 1,
+    visibleSince: document.hidden ? null : now, visibleMs: 0,
+    endReason: "", firstActionRt: null, events: [], counts: {}, questions: {},
+    viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
+    devicePixelRatio: window.devicePixelRatio || 1,
+    ...details
+  };
+  pageVisits.push(currentPageVisit);
+}
+
+function recordActivity(type, details = {}) {
+  if (activityStopped || !currentPageVisit || currentPageVisit.end !== null) return;
+  const now = elapsedMilliseconds();
+  const rt = Math.round((now - currentPageVisit.start) * 1000) / 1000;
+  currentPageVisit.events.push({ sequence: ++activitySequence, type, time_elapsed: now, rt, phase, ...details });
+  currentPageVisit.counts[type] = (currentPageVisit.counts[type] || 0) + 1;
+  if (currentPageVisit.firstActionRt === null && ["keydown", "pointerdown", "mousedown", "click", "input", "change"].includes(type)) {
+    currentPageVisit.firstActionRt = rt;
+  }
+  if (details.field && ["focusin", "input", "change"].includes(type)) {
+    const timing = currentPageVisit.questions[details.field] ||= { firstFocusRt: null, firstResponseRt: null, lastResponseRt: null, changeEvents: 0 };
+    if (type === "focusin" && timing.firstFocusRt === null) timing.firstFocusRt = rt;
+    if (type !== "focusin") {
+      if (timing.firstResponseRt === null) timing.firstResponseRt = rt;
+      timing.lastResponseRt = rt;
+      timing.changeEvents += 1;
+      timing.finalValue = details.value;
+    }
+  }
+}
+
+function captureActivityEvent(event) {
+  if (activityStopped) return;
+  const target = event.target;
+  const details = {
+    target: target?.id || target?.name || target?.tagName || "document",
+    field: target?.name || target?.id || "",
+    trusted: event.isTrusted === true
+  };
+  if ("clientX" in event) {
+    details.x = event.clientX; details.y = event.clientY;
+    details.button = event.button; details.buttons = event.buttons;
+    if (event.pointerType) details.pointerType = event.pointerType;
+  }
+  if (event.type === "keydown" || event.type === "keyup") {
+    details.key = target?.type === "password" ? "[redacted]" : event.key;
+    details.code = event.code; details.repeat = event.repeat;
+    details.modifiers = { alt: event.altKey, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey };
+    if (event.type === "keydown" && !heldKeys.has(event.code)) heldKeys.set(event.code, elapsedMilliseconds());
+    if (event.type === "keyup" && heldKeys.has(event.code)) {
+      details.heldMs = elapsedMilliseconds() - heldKeys.get(event.code);
+      heldKeys.delete(event.code);
+    }
+  }
+  if (["input", "change", "focusin", "focusout"].includes(event.type) && target && "value" in target && target.type !== "password" && target.type !== "file") {
+    details.value = target.value;
+    if ("checked" in target) details.checked = target.checked;
+    if (typeof target.selectionStart === "number") {
+      details.selectionStart = target.selectionStart; details.selectionEnd = target.selectionEnd;
+    }
+  }
+  if (event.type === "beforeinput" || event.type === "input") details.inputType = event.inputType || "";
+  if (event.type === "scroll") {
+    details.scrollTop = target?.scrollTop ?? window.scrollY;
+    details.scrollLeft = target?.scrollLeft ?? window.scrollX;
+    details.scrollHeight = target?.scrollHeight;
+    details.clientHeight = target?.clientHeight;
+  }
+  if (event.type === "wheel") {
+    details.deltaX = event.deltaX; details.deltaY = event.deltaY; details.deltaMode = event.deltaMode;
+  }
+  recordActivity(event.type, details);
+}
+
+function activityRows(status, fromPage = 0) {
+  const now = elapsedMilliseconds();
+  return pageVisits.slice(fromPage).map((page) => {
+    const end = page.end ?? now;
+    return {
+      trial_type: page.pageName,
+      Phase: "page", Subject: subjectId, session_id: sessionId,
+      prolific_pid: prolificPid, study_id: studyId,
+      ConditionIndex: assignedCondition?.conditionIndex ?? "",
+      ConditionLabel: assignedCondition?.conditionLabel ?? "",
+      StudyStatus: status, PageVisitID: page.id, PageName: page.pageName,
+      PageVisitNumber: page.visitNumber, Screen: page.screen,
+      TaskPhase: page.taskPhase || "", Trial: page.trialNumber || "",
+      Gain: page.gain ?? "", Loss: page.loss ?? "", Fontsize: page.gainLarge ?? "", GainOnLeft: page.gainOnLeft ?? "",
+      PageStartMs: page.start, PageEndMs: page.end ?? "", time_elapsed: end,
+      PageStartUTC: new Date(experimentStartUtc + page.start).toISOString(),
+      PageEndUTC: page.end === null ? "" : new Date(experimentStartUtc + page.end).toISOString(),
+      rt: Math.round((end - page.start) * 1000) / 1000,
+      PageVisibleMs: Math.round((page.visibleMs + (page.visibleSince === null ? 0 : end - page.visibleSince)) * 1000) / 1000,
+      PageComplete: page.end === null ? 0 : 1, PageEndReason: page.endReason,
+      FirstActionRT: page.firstActionRt ?? "", PlannedFixationMs: page.plannedFixationMs ?? "",
+      ViewportWidth: page.viewportWidth, ViewportHeight: page.viewportHeight, DevicePixelRatio: page.devicePixelRatio,
+      EventCount: page.events.length, EventCountsJSON: JSON.stringify(page.counts),
+      QuestionTimingJSON: JSON.stringify(page.questions), EventsJSON: JSON.stringify(page.events)
+    };
+  });
+}
+
+function installActivityTracking() {
+  startPageVisit("welcome", { pageName: "welcome" });
+  const movementEvents = "PointerEvent" in window
+    ? ["pointerdown", "pointerup", "pointermove", "pointercancel"]
+    : ["mousedown", "mouseup", "mousemove"];
+  [...movementEvents, "click", "dblclick", "contextmenu", "wheel", "scroll", "keydown", "keyup", "beforeinput", "input", "change", "focusin", "focusout", "paste", "cut", "copy", "compositionstart", "compositionend", "submit"].forEach((type) => {
+    document.addEventListener(type, captureActivityEvent, { capture: true, passive: true });
+  });
+  document.addEventListener("visibilitychange", () => {
+    recordActivity("visibilitychange", { hidden: document.hidden });
+    if (!currentPageVisit || currentPageVisit.end !== null) return;
+    const now = elapsedMilliseconds();
+    if (currentPageVisit.visibleSince !== null) currentPageVisit.visibleMs += now - currentPageVisit.visibleSince;
+    currentPageVisit.visibleSince = document.hidden ? null : now;
+  });
+  ["focus", "blur", "resize"].forEach((type) => window.addEventListener(type, () => {
+    recordActivity(type, { width: window.innerWidth, height: window.innerHeight });
+    if (type === "blur") heldKeys.clear();
+  }));
+  ["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"].forEach((type) => {
+    document.addEventListener(type, () => recordActivity(type, { fullscreen: Boolean(currentFullscreenElement()) }));
+  });
+}
 
 function randomId(length) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -174,28 +334,29 @@ function isLockedStudyStatus(statusRecord) {
   ].includes(statusRecord.status));
 }
 
-function showScreen(name) {
+function showScreen(name, details = {}) {
   Object.entries(screens).forEach(([key, element]) => {
     element.classList.toggle("hidden", key !== name);
   });
   const practiceIntroVisible = name === "content" && contentElement.classList.contains("practice-intro-page");
   document.body.classList.toggle("task-mode", practiceIntroVisible || ["message", "fixation", "stimulus"].includes(name));
+  startPageVisit(name, details);
 }
 
-function showContent(html, extraClass = "") {
+function showContent(html, extraClass = "", details = {}) {
   phase = "content";
   contentElement.className = `content-page ${extraClass}`.trim();
   contentElement.innerHTML = html;
   screens.content.classList.toggle("practice-intro-screen", contentElement.classList.contains("practice-intro-page"));
   screens.content.scrollTop = 0;
-  showScreen("content");
+  showScreen("content", { pageName: extraClass || "content", ...details });
 }
 
 function showMessage(text, extraClass = "") {
   phase = "message";
   messageElement.className = `message ${extraClass}`.trim();
   messageElement.textContent = text;
-  showScreen("message");
+  showScreen("message", { pageName: extraClass || "message" });
 }
 
 function sleep(milliseconds) {
@@ -291,6 +452,7 @@ function createTrials() {
 
 function prepareResults() {
   results = trials.map((trial, index) => ({
+    trial_type: "gamble-choice",
     Phase: "choice",
     Subject: subjectId,
     prolific_pid: prolificPid,
@@ -314,7 +476,8 @@ function prepareResults() {
     ComprehensionIncorrectItems: "",
     ComprehensionResponseJSON: "",
     PostTaskFontSizeRating: "",
-    PostTaskFamiliarityRating: "",
+    PostTaskRiskWillingness: "",
+    PostTaskFamiliarity: "",
     PostTaskDecisionStrategy: "",
     PostTaskStrategyWordCount: 0,
     PostTaskCompleted: 0,
@@ -353,13 +516,8 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
       <h1>Instructions</h1>
       <p>In this game, you will make approximately <strong class="emphasis-red">50 choices</strong> about whether to accept or reject a gamble. You will receive a fixed participation payment of <strong>$2.00</strong> for completing the study and start with a bonus endowment of <strong class="emphasis-red">12 tokens</strong>. Your final token balance will be converted into cash at a rate of <strong class="emphasis-red">1 token = 2 cents</strong> <strong>(or $0.02)</strong>.</p>
       <p>The tokens are used only to determine your bonus and will <strong class="emphasis-red">not</strong> reduce your fixed $2.00 participation payment. Your bonus will typically be around $0.24, making your total payment approximately <strong class="emphasis-red">$2.24 on average</strong>. The bonus will be paid separately through Connect within <strong class="emphasis-red">14 business days</strong> after you complete the study.</p>
-      <p>As shown in the figure below, each gamble shows a possible gain, marked with a <strong>“ + ”</strong>, and a possible loss, marked with a <strong>“ - ”</strong>. For each gamble, you have two options: Accept or Reject. If you accept, you have a <strong class="emphasis-red">50%</strong> chance of gaining the number of tokens shown and a <strong class="emphasis-red">50%</strong> chance of losing the number shown. Press the <strong class="key-highlight">“↑”</strong> key to <strong class="key-highlight">accept</strong> the gamble, and press the <strong class="key-highlight">“↓”</strong> key to <strong class="key-highlight">reject</strong> it.</p>
-      <p>Please note that the probabilities of winning and losing in each gamble are equal, both being <strong class="emphasis-red">50%</strong>.</p>
-      <figure class="instruction-figure">
-        <img src="${instructionImagePath()}" alt="Example gamble showing a possible gain of 7 tokens and a possible loss of 4 tokens.">
-      </figure>
       <button id="instruction-next" class="content-button" type="button">Next</button>
-    `, "instruction-page");
+    `, "instruction-page", { pageName: "instructions_1" });
     document.getElementById("instruction-next").addEventListener("click", () => showInstructionPage(2));
     return;
   }
@@ -367,10 +525,12 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
   if (pageNumber === 2) {
     showContent(`
       <h1>Instructions</h1>
-      <p>Your decisions will be recorded but not carried out immediately. After all rounds are completed, the computer will <strong>randomly select <span class="emphasis-red">one round</span></strong> to determine your payment.</p>
+      <p>As shown in the figure below, each gamble shows a possible gain, marked with a <strong>“ + ”</strong>, and a possible loss, marked with a <strong>“ - ”</strong>. For each gamble, you have two options: Accept or Reject. If you accept, you have a <strong class="emphasis-red">50%</strong> chance of gaining the number of tokens shown and a <strong class="emphasis-red">50%</strong> chance of losing the number shown. Press the <strong class="key-highlight">“↑”</strong> key to <strong class="key-highlight">accept</strong> the gamble, and press the <strong class="key-highlight">“↓”</strong> key to <strong class="key-highlight">reject</strong> it.</p>
+      <p>Please note that the probabilities of winning and losing in each gamble are equal, both being <strong class="emphasis-red">50%</strong>.</p>
       <figure class="instruction-figure instruction-figure-small">
         <img src="${instructionImagePath()}" alt="Example gamble showing a possible gain of 7 tokens and a possible loss of 4 tokens.">
       </figure>
+      <p>Your decisions will be recorded but not carried out immediately. After all rounds are completed, the computer will <strong>randomly select <span class="emphasis-red">one round</span></strong> to determine your payment.</p>
       <p class="instruction-section-break">For example, suppose the “+7/−4” gamble shown above is selected:</p>
       <p>If you chose to <strong class="emphasis-red">“Accept”</strong>, the computer will simulate a fair coin toss:</p>
       <ul class="instruction-list">
@@ -386,7 +546,7 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
         <button id="instruction-back" class="content-button secondary-button" type="button">Back</button>
         <button id="instruction-next" class="content-button" type="button">Next</button>
       </div>
-    `, "instruction-page");
+    `, "instruction-page", { pageName: "instructions_2" });
     document.getElementById("instruction-back").addEventListener("click", () => showInstructionPage(1));
     document.getElementById("instruction-next").addEventListener("click", () => showInstructionPage(3));
     return;
@@ -411,7 +571,7 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
       <button id="instruction-back" class="content-button secondary-button" type="button">Back</button>
       <button id="comprehension-next" class="content-button" type="button">Next</button>
     </div>
-  `, "instruction-page");
+  `, "instruction-page", { pageName: "instructions_3" });
   document.getElementById("instruction-back").addEventListener("click", () => showInstructionPage(2));
   document.getElementById("comprehension-next").addEventListener("click", showComprehensionTest);
 }
@@ -553,6 +713,7 @@ function showComprehensionTest() {
       response,
       rtMilliseconds: Math.round(performance.now() - pageStart)
     });
+    recordActivity("comprehension_result", comprehensionRecords[comprehensionRecords.length - 1]);
 
     if (comprehensionPassed) {
       runTask().catch(handleUnexpectedError);
@@ -564,35 +725,49 @@ function showComprehensionTest() {
   });
 }
 
-function drawStimulus(trial) {
+function drawStimulus(trial, details = {}) {
   const gainElement = trial.gainOnLeft === 1 ? leftStimulus : rightStimulus;
   const lossElement = trial.gainOnLeft === 1 ? rightStimulus : leftStimulus;
   gainElement.textContent = `+${trial.gain}`;
   lossElement.textContent = `-${trial.loss}`;
   gainElement.className = `stimulus ${trial.gainLarge === 1 ? "large" : "small"}`;
   lossElement.className = `stimulus ${trial.gainLarge === 1 ? "small" : "large"}`;
-  showScreen("stimulus");
+  showScreen("stimulus", details);
 }
 
 async function runTrial(trial, resultRow = null) {
+  const taskPhase = resultRow ? "choice" : "practice";
+  const trialNumber = resultRow ? resultRow.Trial : practiceResults.length + 1;
+  const trialDetails = { taskPhase, trialNumber, ...trial };
+  const row = resultRow || {
+    trial_type: "gamble-practice", Phase: "practice", Subject: subjectId, session_id: sessionId,
+    Trial: trialNumber, Gain: trial.gain, Loss: trial.loss, Fontsize: trial.gainLarge, GainOnLeft: trial.gainOnLeft,
+    Choice: "", RT: "", KeyResponse: ""
+  };
+  if (!resultRow) practiceResults.push(row);
+  const fixationDuration = 2000 + randomUnit() * 1000;
   phase = "fixation";
-  showScreen("fixation");
-  await sleep(2000 + randomUnit() * 1000);
+  showScreen("fixation", { pageName: `${taskPhase}_fixation`, plannedFixationMs: fixationDuration, ...trialDetails });
+  row.FixationPageVisitID = currentPageVisit.id;
+  await sleep(fixationDuration);
   if (aborted) return;
 
   phase = "response";
-  drawStimulus(trial);
+  drawStimulus(trial, { pageName: `${taskPhase}_response`, ...trialDetails });
+  row.PageVisitID = currentPageVisit.id;
   const startedAt = performance.now();
   const code = await waitForKey(["ArrowUp", "ArrowDown"]);
   if (aborted) return;
 
-  if (resultRow) {
-    resultRow.KeyResponse = code === "ArrowUp" ? 1 : 2;
-    resultRow.RT = (performance.now() - startedAt) / 1000;
-    resultRow.Choice = code === "ArrowUp" ? 1 : 0;
-  }
+  row.KeyResponse = code === "ArrowUp" ? 1 : 2;
+  row.RT = (performance.now() - startedAt) / 1000;
+  row.rt = row.RT * 1000;
+  row.Choice = code === "ArrowUp" ? 1 : 0;
+  row.response = code;
+  row.time_elapsed = elapsedMilliseconds();
+  recordActivity("decision_response", { response: code, choice: row.Choice, decisionRtMs: row.rt });
 
-  showScreen("message");
+  showScreen("message", { pageName: "inter_trial", ...trialDetails });
   messageElement.textContent = "";
 }
 
@@ -616,7 +791,7 @@ async function runTask() {
     if (aborted) return;
   }
 
-  showMessage("The decision phase is complete. Please wait...");
+  showMessage("The decision phase is complete. Please wait...", "post-task-transition");
   phase = "post_task_transition";
   await sleep(2000);
   if (aborted) return;
@@ -665,11 +840,27 @@ function countStrategyWords(text) {
 
 async function postTaskQuestionsAndWait() {
   showContent(`
-    <h1>Three brief questions</h1>
-    <p>Before we show your payment result, please answer three brief questions.</p>
+    <h1>Four brief questions</h1>
+    <p>Before we show your payment result, please answer four brief questions.</p>
     <form id="post-task-form" novalidate>
       <div class="form-question">
-        <div id="font-size-question" class="question-text">1. In the gamble task you just completed, the potential gain and potential loss were presented in different font sizes. To what extent did the amount shown in the larger font appear numerically larger than the amount shown in the smaller font?</div>
+        <div id="risk-question" class="question-text">1. In general, how willing or unwilling you are to take risks?</div>
+        <p id="risk-scale-description">Please respond on a scale from 1 to 7 (1 = completely unwilling to take risks, 7 = very willing to take risks).</p>
+        <div class="post-task-scale" role="radiogroup" aria-labelledby="risk-question" aria-describedby="risk-scale-description risk-required" aria-required="true">
+          <div class="post-task-scale-anchors risk-scale-anchors" aria-hidden="true"><span>completely<br>unwilling<br>to take risks</span><span>very<br>willing<br>to take risks</span></div>
+          <div class="post-task-scale-options">
+            ${[1, 2, 3, 4, 5, 6, 7].map((rating) => `
+              <label class="post-task-scale-option">
+                <input type="radio" name="risk_willingness" value="${rating}" required aria-label="${rating}${rating === 1 ? ' — Completely unwilling to take risks' : rating === 7 ? ' — Very willing to take risks' : ''}">
+                <span>${rating}</span>
+              </label>
+            `).join("")}
+          </div>
+        </div>
+        <div id="risk-required" class="question-required" role="alert">Please select a response from 1 to 7.</div>
+      </div>
+      <div class="form-question">
+        <div id="font-size-question" class="question-text">2. In the gamble task you just completed, the potential gain and potential loss were presented in different font sizes. To what extent did the amount shown in the larger font appear numerically larger than the amount shown in the smaller font?</div>
         <p id="font-size-scale-description">Please respond on a scale from 1 to 7 (1 = not at all, 7 = very strong).</p>
         <div class="post-task-scale" role="radiogroup" aria-labelledby="font-size-question" aria-describedby="font-size-scale-description font-size-required" aria-required="true">
           <div class="post-task-scale-anchors" aria-hidden="true"><span>Not at all</span><span>Very strong</span></div>
@@ -685,23 +876,19 @@ async function postTaskQuestionsAndWait() {
         <div id="font-size-required" class="question-required" role="alert">Please select a response from 1 to 7.</div>
       </div>
       <div class="form-question">
-        <div id="familiarity-question" class="question-text">2. How familiar are you with today's experimental task?</div>
-        <p id="familiarity-scale-description">Please respond on a scale from 1 to 7 (1 = not at all familiar, 7 = very familiar).</p>
-        <div class="post-task-scale" role="radiogroup" aria-labelledby="familiarity-question" aria-describedby="familiarity-scale-description familiarity-required" aria-required="true">
-          <div class="post-task-scale-anchors" aria-hidden="true"><span>Not at all familiar</span><span>Very familiar</span></div>
-          <div class="post-task-scale-options">
-            ${[1, 2, 3, 4, 5, 6, 7].map((rating) => `
-              <label class="post-task-scale-option">
-                <input type="radio" name="familiarity_rating" value="${rating}" required aria-label="${rating}${rating === 1 ? ' — Not at all familiar' : rating === 7 ? ' — Very familiar' : ''}">
-                <span>${rating}</span>
-              </label>
-            `).join("")}
-          </div>
+        <div id="familiarity-question" class="question-text">3. Before today, had you ever completed a similar decision-making task involving gambles?</div>
+        <div class="single-choice-list" role="radiogroup" aria-labelledby="familiarity-question" aria-describedby="familiarity-required" aria-required="true">
+          ${[["no", "No"], ["yes_once", "Yes, once"], ["yes_more_than_once", "Yes, more than once"], ["not_sure", "Not sure"]].map(([value, label]) => `
+            <label class="single-choice-option">
+              <input type="radio" name="familiarity" value="${value}" required>
+              <span>${label}</span>
+            </label>
+          `).join("")}
         </div>
-        <div id="familiarity-required" class="question-required" role="alert">Please select a response from 1 to 7.</div>
+        <div id="familiarity-required" class="question-required" role="alert">Please select one option.</div>
       </div>
       <div class="form-question">
-        <div class="question-text"><label for="decision-strategy">3. What strategy did you use when deciding whether to accept or reject the gambles?</label></div>
+        <div class="question-text"><label for="decision-strategy">4. What strategy did you use when deciding whether to accept or reject the gambles?</label></div>
         <p id="strategy-instruction">Please describe your strategy in at least ${MIN_STRATEGY_WORDS} words.</p>
         <textarea id="decision-strategy" class="post-task-strategy" name="decision_strategy" rows="6" required aria-describedby="strategy-instruction strategy-word-count strategy-required"></textarea>
         <p id="strategy-word-count" class="post-task-word-count" aria-live="polite">0 words (minimum: ${MIN_STRATEGY_WORDS})</p>
@@ -715,22 +902,28 @@ async function postTaskQuestionsAndWait() {
   const form = document.getElementById("post-task-form");
   const strategyInput = document.getElementById("decision-strategy");
   const wordCountElement = document.getElementById("strategy-word-count");
+  const riskWarning = document.getElementById("risk-required");
   const ratingWarning = document.getElementById("font-size-required");
   const familiarityWarning = document.getElementById("familiarity-required");
   const strategyWarning = document.getElementById("strategy-required");
   const submitButton = document.getElementById("post-task-submit");
   const captureResponses = () => {
+    const selectedRisk = form.querySelector('input[name="risk_willingness"]:checked');
+    postTaskResponses.riskWillingness = selectedRisk ? Number(selectedRisk.value) : "";
     const selectedRating = form.querySelector('input[name="font_size_rating"]:checked');
     postTaskResponses.fontSizeRating = selectedRating ? Number(selectedRating.value) : "";
-    const selectedFamiliarity = form.querySelector('input[name="familiarity_rating"]:checked');
-    postTaskResponses.familiarityRating = selectedFamiliarity ? Number(selectedFamiliarity.value) : "";
+    const selectedFamiliarity = form.querySelector('input[name="familiarity"]:checked');
+    postTaskResponses.familiarity = selectedFamiliarity ? selectedFamiliarity.value : "";
     postTaskResponses.decisionStrategy = strategyInput.value.trim();
     postTaskResponses.strategyWordCount = countStrategyWords(postTaskResponses.decisionStrategy);
     wordCountElement.textContent = `${postTaskResponses.strategyWordCount} words (minimum: ${MIN_STRATEGY_WORDS})`;
+    if (Number.isInteger(postTaskResponses.riskWillingness) && postTaskResponses.riskWillingness >= 1 && postTaskResponses.riskWillingness <= 7) {
+      riskWarning.style.display = "none";
+    }
     if (Number.isInteger(postTaskResponses.fontSizeRating) && postTaskResponses.fontSizeRating >= 1 && postTaskResponses.fontSizeRating <= 7) {
       ratingWarning.style.display = "none";
     }
-    if (Number.isInteger(postTaskResponses.familiarityRating) && postTaskResponses.familiarityRating >= 1 && postTaskResponses.familiarityRating <= 7) {
+    if (["no", "yes_once", "yes_more_than_once", "not_sure"].includes(postTaskResponses.familiarity)) {
       familiarityWarning.style.display = "none";
     }
     if (postTaskResponses.strategyWordCount >= MIN_STRATEGY_WORDS) {
@@ -751,16 +944,20 @@ async function postTaskQuestionsAndWait() {
       event.preventDefault();
       if (aborted || phase !== "post_task_questions" || postTaskResponses.completed) return;
       captureResponses();
+      const validRisk = Number.isInteger(postTaskResponses.riskWillingness) && postTaskResponses.riskWillingness >= 1 && postTaskResponses.riskWillingness <= 7;
       const validRating = Number.isInteger(postTaskResponses.fontSizeRating) && postTaskResponses.fontSizeRating >= 1 && postTaskResponses.fontSizeRating <= 7;
-      const validFamiliarity = Number.isInteger(postTaskResponses.familiarityRating) && postTaskResponses.familiarityRating >= 1 && postTaskResponses.familiarityRating <= 7;
+      const validFamiliarity = ["no", "yes_once", "yes_more_than_once", "not_sure"].includes(postTaskResponses.familiarity);
       const validStrategy = postTaskResponses.strategyWordCount >= MIN_STRATEGY_WORDS;
+      riskWarning.style.display = validRisk ? "none" : "block";
       ratingWarning.style.display = validRating ? "none" : "block";
       familiarityWarning.style.display = validFamiliarity ? "none" : "block";
       strategyWarning.style.display = validStrategy ? "none" : "block";
       strategyInput.setAttribute("aria-invalid", String(!validStrategy));
-      if (!validRating || !validFamiliarity || !validStrategy) {
-        if (!validRating) form.querySelector('input[name="font_size_rating"]').focus();
-        else if (!validFamiliarity) form.querySelector('input[name="familiarity_rating"]').focus();
+      recordActivity("post_task_submit", { valid: validRisk && validRating && validFamiliarity && validStrategy, response: { ...postTaskResponses } });
+      if (!validRisk || !validRating || !validFamiliarity || !validStrategy) {
+        if (!validRisk) form.querySelector('input[name="risk_willingness"]').focus();
+        else if (!validRating) form.querySelector('input[name="font_size_rating"]').focus();
+        else if (!validFamiliarity) form.querySelector('input[name="familiarity"]').focus();
         else strategyInput.focus();
         return;
       }
@@ -786,7 +983,7 @@ function completeStudyAfterSave() {
   showPaymentResult();
 }
 
-function showDataPipeSaveFailure() {
+function showDataPipeSaveFailure(completionOnly = false) {
   const validationRejected = dataPipeSaveError?.code === "INVALID_DATA";
   const recoveryMessage = validationRejected
     ? "Please keep this page open and contact the researcher. The study's online storage rejected the data. Select Retry after the researcher has corrected the storage validation settings. You can also download a backup copy if needed."
@@ -814,12 +1011,13 @@ function showDataPipeSaveFailure() {
     const button = event.currentTarget;
     button.disabled = true;
     button.textContent = "Saving...";
-    const saved = await saveToDataPipe("completed");
+    const saved = await saveToDataPipe("completed", completionOnly);
     if (aborted) return;
     if (saved) {
-      completeStudyAfterSave();
+      if (completionOnly) finishAfterCompletionSave();
+      else completeStudyAfterSave();
     } else {
-      showDataPipeSaveFailure();
+      showDataPipeSaveFailure(completionOnly);
     }
   });
 }
@@ -915,7 +1113,8 @@ function applySummaryToResults(status) {
     row.ComprehensionIncorrectItems = incorrectItems;
     row.ComprehensionResponseJSON = responseJson;
     row.PostTaskFontSizeRating = postTaskResponses.fontSizeRating;
-    row.PostTaskFamiliarityRating = postTaskResponses.familiarityRating;
+    row.PostTaskRiskWillingness = postTaskResponses.riskWillingness;
+    row.PostTaskFamiliarity = postTaskResponses.familiarity;
     row.PostTaskDecisionStrategy = postTaskResponses.decisionStrategy;
     row.PostTaskStrategyWordCount = postTaskResponses.strategyWordCount;
     row.PostTaskCompleted = postTaskResponses.completed ? 1 : 0;
@@ -936,6 +1135,7 @@ function applySummaryToResults(status) {
 
 function summaryOnlyRow(status) {
   return {
+    trial_type: "session-summary",
     Phase: "summary",
     Subject: subjectId,
     prolific_pid: prolificPid,
@@ -959,7 +1159,8 @@ function summaryOnlyRow(status) {
     ComprehensionIncorrectItems: comprehensionRecords.map((record) => `attempt${record.attempt}:${record.incorrect.join("|") || "none"}`).join(";"),
     ComprehensionResponseJSON: JSON.stringify(comprehensionRecords),
     PostTaskFontSizeRating: postTaskResponses.fontSizeRating,
-    PostTaskFamiliarityRating: postTaskResponses.familiarityRating,
+    PostTaskRiskWillingness: postTaskResponses.riskWillingness,
+    PostTaskFamiliarity: postTaskResponses.familiarity,
     PostTaskDecisionStrategy: postTaskResponses.decisionStrategy,
     PostTaskStrategyWordCount: postTaskResponses.strategyWordCount,
     PostTaskCompleted: postTaskResponses.completed ? 1 : 0,
@@ -979,9 +1180,12 @@ function summaryOnlyRow(status) {
 }
 
 function exportRows(status) {
-  if (results.length === 0) return [summaryOnlyRow(status)];
   applySummaryToResults(status);
-  return results;
+  return [
+    ...(results.length ? results : [summaryOnlyRow(status)]),
+    ...practiceResults.map((row) => ({ ...row, StudyStatus: status, ConditionIndex: assignedCondition?.conditionIndex ?? "", ConditionLabel: assignedCondition?.conditionLabel ?? "" })),
+    ...activityRows(status)
+  ];
 }
 
 function csvValue(value) {
@@ -989,9 +1193,13 @@ function csvValue(value) {
   return `"${stringValue.replaceAll('"', '""')}"`;
 }
 
-function buildCsv(status) {
-  const rows = exportRows(status);
-  const columns = Object.keys(rows[0]);
+function buildCsv(status, completionOnly = false) {
+  const rows = completionOnly
+    ? [{ ...summaryOnlyRow(status), trial_type: "session-completion" }, ...activityRows(status, mainSavedPageCount)]
+    : exportRows(status);
+  // Union is essential: page/practice rows have fields not present in choice rows.
+  // trial_type is also present for early exits with no completed decisions.
+  const columns = [...new Set(["trial_type", ...rows.flatMap((row) => Object.keys(row))])];
   return [
     columns.map(csvValue).join(","),
     ...rows.map((row) => columns.map((column) => csvValue(row[column])).join(","))
@@ -1016,8 +1224,15 @@ function downloadData(status) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-async function saveToDataPipe(status) {
-  if (dataPipeSaved) return true;
+function saveToDataPipe(status, completionOnly = false) {
+  // Serialize saves: a fullscreen exit during an upload must not race another
+  // request to the same filename. Late termination events use the supplement.
+  uploadQueue = uploadQueue.catch(() => false).then(() => uploadToDataPipe(status, completionOnly || (status !== "completed" && dataPipeSaved)));
+  return uploadQueue;
+}
+
+async function uploadToDataPipe(status, completionOnly = false) {
+  if (completionOnly ? completionDataSaved : dataPipeSaved) return true;
   dataPipeSaveError = null;
   if (!isDataPipeConfigured()) {
     dataPipeSaveError = { code: "DATAPIPE_NOT_CONFIGURED", message: "The study's online data storage has not been configured. Please contact the researcher." };
@@ -1026,18 +1241,33 @@ async function saveToDataPipe(status) {
 
   const requestBody = JSON.stringify({
     experimentID: DATAPIPE_EXPERIMENT_ID,
-    filename: dataFilename,
-    data: buildCsv(status)
+    filename: completionOnly ? dataFilename.replace(/\.csv$/, "_completion.csv") : dataFilename,
+    data: buildCsv(status, completionOnly)
   });
+  // The open saving page is included again, with its final duration, in the
+  // completion file. PageVisitID links the two snapshots without losing events.
+  const closedPageCount = pageVisits.filter((page) => page.end !== null).length;
   const requestBytes = new Blob([requestBody]).size;
   try {
+    let body = requestBody;
+    const headers = { "Content-Type": "application/json" };
+    if (requestBytes > 512 * 1024 && typeof CompressionStream !== "undefined") {
+      const compressed = new Blob([requestBody]).stream().pipeThrough(new CompressionStream("gzip"));
+      body = await new Response(compressed).arrayBuffer();
+      headers["Content-Encoding"] = "gzip";
+    }
+    const uploadBytes = typeof body === "string" ? requestBytes : body.byteLength;
+    if (uploadBytes >= 30 * 1024 * 1024) {
+      dataPipeSaveError = { code: "PAYLOAD_TOO_LARGE", message: "The detailed activity log is too large to upload in this browser. Please download a backup copy and contact the researcher. Your data have not been discarded." };
+      return false;
+    }
     const response = await fetch("https://pipe.jspsych.org/api/data/", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: requestBody,
+      headers,
+      body,
       // Completed data can exceed the browser's 64 KiB keepalive quota.
       // Small termination reports may still continue after the page closes.
-      keepalive: status !== "completed" && requestBytes < 64 * 1024
+      keepalive: status !== "completed" && uploadBytes < 64 * 1024
     });
     const payload = await response.json().catch(() => null);
     if (!response.ok || payload?.error || payload?.message !== "Success") {
@@ -1059,7 +1289,11 @@ async function saveToDataPipe(status) {
       }
       return false;
     }
-    dataPipeSaved = true;
+    if (completionOnly) completionDataSaved = true;
+    else {
+      dataPipeSaved = true;
+      mainSavedPageCount = closedPageCount;
+    }
     return true;
   } catch (error) {
     dataPipeSaveError = {
@@ -1100,6 +1334,8 @@ function handleFullscreenChange() {
       if (pageIsUnloading || plannedFullscreenExit || currentFullscreenElement() || !fullscreenAbortArmed) return;
       const storedStatus = getStoredStudyStatus();
       if (storedStatus && storedStatus.status === "completed") {
+        closePageVisit("fullscreen_exit_after_result");
+        void saveToDataPipe("completed", true);
         fullscreenAbortArmed = false;
         showLockedStatus(storedStatus);
         return;
@@ -1141,7 +1377,25 @@ function showLockedStatus(statusRecord) {
   phase = "locked";
 }
 
-function finishStudy() {
+async function finishStudy() {
+  if (phase !== "result" || completionSavePending) return;
+  completionSavePending = true;
+  recordActivity("finish_requested");
+  closePageVisit("finish");
+  showContent("<h2>Saving your data...</h2><p>Please do not close this page.</p>", "loading-page");
+  const saved = await saveToDataPipe("completed", true);
+  completionSavePending = false;
+  if (aborted) return;
+  if (!saved) {
+    showDataPipeSaveFailure(true);
+    return;
+  }
+  finishAfterCompletionSave();
+}
+
+function finishAfterCompletionSave() {
+  closePageVisit("completed");
+  activityStopped = true;
   phase = "finished";
   plannedFullscreenExit = true;
   fullscreenAbortArmed = false;
@@ -1228,9 +1482,12 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("beforeunload", () => {
+  recordActivity("beforeunload");
   pageIsUnloading = true;
 });
 window.addEventListener("pagehide", () => {
+  recordActivity("pagehide");
+  closePageVisit("pagehide");
   pageIsUnloading = true;
 });
 document.addEventListener("fullscreenchange", handleFullscreenChange);
@@ -1238,6 +1495,7 @@ document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
 document.addEventListener("mozfullscreenchange", handleFullscreenChange);
 document.addEventListener("MSFullscreenChange", handleFullscreenChange);
 
+installActivityTracking();
 const storedStatus = getStoredStudyStatus();
 if (isLockedStudyStatus(storedStatus)) {
   showLockedStatus(storedStatus);

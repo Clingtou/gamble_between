@@ -412,6 +412,10 @@ input:focus-visible {
   gap: 6px;
 }
 
+.risk-scale-anchors span:last-child {
+  text-align: right;
+}
+
 .post-task-scale-option {
   position: relative;
   cursor: pointer;
