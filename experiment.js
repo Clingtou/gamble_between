@@ -4,6 +4,21 @@
 // conditions in DataPipe: 0 = gain_larger, 1 = loss_larger.
 const DATAPIPE_EXPERIMENT_ID = "IYVU1vExfBFD";
 
+const CONNECT_COMPLETION_CODE = "DC6CDE9748";
+const CONNECT_COMPLETION_URL = "https://connect.cloudresearch.com/participant/project/DC6CDE9748/complete";
+
+// Only BonusDollars is exported as cash. RT is in seconds for every row;
+// time_elapsed is milliseconds since the experiment script started.
+const CSV_COLUMNS = [
+  "trial_type", "Phase", "Subject", "participantId", "projectId", "assignmentId",
+  "datapipe_experiment_id", "datapipe_condition_source", "ConditionIndex", "ConditionLabel",
+  "AcceptKey", "Gain", "Loss", "Fontsize", "GainOnLeft", "Choice", "RT", "KeyResponse", "Trial",
+  "ComprehensionAttempts", "ComprehensionPassed", "ComprehensionIncorrectItems", "ComprehensionResponseJSON",
+  "PostTaskFontSizeRating", "PostTaskRiskWillingness", "PostTaskFamiliarity",
+  "PostTaskDecisionStrategy", "PostTaskStrategyWordCount", "PostTaskCompleted",
+  "SelectedForPayment", "PaymentOutcome", "FinalTokens", "BonusDollars", "StudyStatus", "time_elapsed"
+];
+
 const INITIAL_ENDOWMENT = 12;
 const CENTS_PER_TOKEN = 2;
 const PARTICIPATION_PAYMENT_CENTS = 200;
@@ -25,7 +40,7 @@ const PRACTICE_TEMPLATE = [
 
 const TEXT = {
   postComprehension: "You are now ready to begin the decision task.\n\nIt will start with three practice trials on a GRAY background.\nDuring the practice trials and main task,\nuse only the keyboard; do not use a mouse or trackpad.\n\nPress the “SPACEBAR” when you are ready to continue.",
-  practice: "You will now complete three practice trials.\nThese trials will not affect your bonus.\n\nPress ↑ to accept and ↓ to reject.\n\nPress the “SPACEBAR” when you are ready to continue.",
+  practice: "You will now complete three practice trials.\nThese trials will not affect your bonus.\n\nPress “ ↑ ” to accept and “ ↓ ” to reject.\n\nPress the “SPACEBAR” when you are ready to continue.",
   start: "Practice completed! The main task is about to begin.\n\nYour decision time will be recorded,\nso once the task begins, please do not get distracted.\nPlease stay focused until you finish the task.\n\nIf you are ready,\npress the \"SPACEBAR\" to start immediately."
 };
 
@@ -46,13 +61,14 @@ const fullscreenStartButton = document.getElementById("fullscreen-start");
 const welcomeError = document.getElementById("welcome-error");
 
 const urlParameters = new URLSearchParams(window.location.search);
-const prolificPid = urlParameters.get("PROLIFIC_PID") || "missing";
-const studyId = urlParameters.get("STUDY_ID") || "missing";
-const sessionId = urlParameters.get("SESSION_ID") || randomId(12);
-const subjectId = prolificPid !== "missing" ? prolificPid : getOrCreateAnonymousSubjectId();
-const previewMode = urlParameters.get("preview") === "1" || prolificPid === "missing";
-const studyLockKey = `gamble_task_status_${subjectId}_${studyId}`;
-const dataFilename = `${safeFilename(subjectId)}_${safeFilename(sessionId)}_${Date.now()}_gamble.csv`;
+// Connect URL parameter names are case-sensitive. No participantId means preview.
+const participantId = urlParameters.get("participantId")?.trim() || "missing";
+const projectId = urlParameters.get("projectId")?.trim() || DATAPIPE_EXPERIMENT_ID;
+const assignmentId = urlParameters.get("assignmentId")?.trim() || randomId(12);
+const subjectId = participantId !== "missing" ? participantId : getOrCreateAnonymousSubjectId();
+const previewMode = urlParameters.get("preview") === "1" || participantId === "missing";
+const studyLockKey = `gamble_task_status_${subjectId}_${projectId}`;
+const dataFilename = `${safeFilename(subjectId)}_${safeFilename(assignmentId)}_${Date.now()}_gamble.csv`;
 
 let assignedCondition = null;
 let trials = [];
@@ -80,163 +96,37 @@ let fullscreenExitTimer = null;
 let dataDownloaded = false;
 let dataPipeSaved = false;
 let dataPipeSaveError = null;
-// Activity is collected only inside this experiment document, until Finish.
-// Browser-delivered movement events are retained without application throttling.
+// Keep only page durations. Detailed mouse/keyboard logs are no longer collected.
 const pageVisits = [];
 let currentPageVisit = null;
-let activitySequence = 0;
 let activityStopped = false;
-let mainSavedPageCount = 0;
-let completionDataSaved = false;
-let completionSavePending = false;
 let uploadQueue = Promise.resolve();
-const experimentStartUtc = Date.now() - (performance.now() - experimentStartPerf);
-const heldKeys = new Map();
 
 function elapsedMilliseconds() {
   return Math.round((performance.now() - experimentStartPerf) * 1000) / 1000;
 }
 
-function closePageVisit(reason = "page_change") {
-  if (!currentPageVisit || currentPageVisit.end !== null) return;
-  const now = elapsedMilliseconds();
-  if (currentPageVisit.visibleSince !== null) currentPageVisit.visibleMs += now - currentPageVisit.visibleSince;
-  currentPageVisit.visibleSince = null;
-  currentPageVisit.end = now;
-  currentPageVisit.endReason = reason;
+function closePageVisit() {
+  if (currentPageVisit && currentPageVisit.end === null) currentPageVisit.end = elapsedMilliseconds();
 }
 
 function startPageVisit(screen, details = {}) {
   if (activityStopped) return;
   closePageVisit();
-  const now = elapsedMilliseconds();
-  const pageName = details.pageName || screen;
-  currentPageVisit = {
-    id: pageVisits.length + 1, screen, pageName, start: now, end: null,
-    visitNumber: pageVisits.filter((page) => page.pageName === pageName).length + 1,
-    visibleSince: document.hidden ? null : now, visibleMs: 0,
-    endReason: "", firstActionRt: null, events: [], counts: {}, questions: {},
-    viewportWidth: window.innerWidth, viewportHeight: window.innerHeight,
-    devicePixelRatio: window.devicePixelRatio || 1,
-    ...details
-  };
+  currentPageVisit = { pageName: details.pageName || screen, start: elapsedMilliseconds(), end: null, ...details };
   pageVisits.push(currentPageVisit);
 }
 
-function recordActivity(type, details = {}) {
-  if (activityStopped || !currentPageVisit || currentPageVisit.end !== null) return;
+function activityRows(status) {
   const now = elapsedMilliseconds();
-  const rt = Math.round((now - currentPageVisit.start) * 1000) / 1000;
-  currentPageVisit.events.push({ sequence: ++activitySequence, type, time_elapsed: now, rt, phase, ...details });
-  currentPageVisit.counts[type] = (currentPageVisit.counts[type] || 0) + 1;
-  if (currentPageVisit.firstActionRt === null && ["keydown", "pointerdown", "mousedown", "click", "input", "change"].includes(type)) {
-    currentPageVisit.firstActionRt = rt;
-  }
-  if (details.field && ["focusin", "input", "change"].includes(type)) {
-    const timing = currentPageVisit.questions[details.field] ||= { firstFocusRt: null, firstResponseRt: null, lastResponseRt: null, changeEvents: 0 };
-    if (type === "focusin" && timing.firstFocusRt === null) timing.firstFocusRt = rt;
-    if (type !== "focusin") {
-      if (timing.firstResponseRt === null) timing.firstResponseRt = rt;
-      timing.lastResponseRt = rt;
-      timing.changeEvents += 1;
-      timing.finalValue = details.value;
-    }
-  }
-}
-
-function captureActivityEvent(event) {
-  if (activityStopped) return;
-  const target = event.target;
-  const details = {
-    target: target?.id || target?.name || target?.tagName || "document",
-    field: target?.name || target?.id || "",
-    trusted: event.isTrusted === true
-  };
-  if ("clientX" in event) {
-    details.x = event.clientX; details.y = event.clientY;
-    details.button = event.button; details.buttons = event.buttons;
-    if (event.pointerType) details.pointerType = event.pointerType;
-  }
-  if (event.type === "keydown" || event.type === "keyup") {
-    details.key = target?.type === "password" ? "[redacted]" : event.key;
-    details.code = event.code; details.repeat = event.repeat;
-    details.modifiers = { alt: event.altKey, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey };
-    if (event.type === "keydown" && !heldKeys.has(event.code)) heldKeys.set(event.code, elapsedMilliseconds());
-    if (event.type === "keyup" && heldKeys.has(event.code)) {
-      details.heldMs = elapsedMilliseconds() - heldKeys.get(event.code);
-      heldKeys.delete(event.code);
-    }
-  }
-  if (["input", "change", "focusin", "focusout"].includes(event.type) && target && "value" in target && target.type !== "password" && target.type !== "file") {
-    details.value = target.value;
-    if ("checked" in target) details.checked = target.checked;
-    if (typeof target.selectionStart === "number") {
-      details.selectionStart = target.selectionStart; details.selectionEnd = target.selectionEnd;
-    }
-  }
-  if (event.type === "beforeinput" || event.type === "input") details.inputType = event.inputType || "";
-  if (event.type === "scroll") {
-    details.scrollTop = target?.scrollTop ?? window.scrollY;
-    details.scrollLeft = target?.scrollLeft ?? window.scrollX;
-    details.scrollHeight = target?.scrollHeight;
-    details.clientHeight = target?.clientHeight;
-  }
-  if (event.type === "wheel") {
-    details.deltaX = event.deltaX; details.deltaY = event.deltaY; details.deltaMode = event.deltaMode;
-  }
-  recordActivity(event.type, details);
-}
-
-function activityRows(status, fromPage = 0) {
-  const now = elapsedMilliseconds();
-  return pageVisits.slice(fromPage).map((page) => {
-    const end = page.end ?? now;
-    return {
-      trial_type: page.pageName,
-      Phase: "page", Subject: subjectId, session_id: sessionId,
-      prolific_pid: prolificPid, study_id: studyId,
-      ConditionIndex: assignedCondition?.conditionIndex ?? "",
-      ConditionLabel: assignedCondition?.conditionLabel ?? "",
-      StudyStatus: status, PageVisitID: page.id, PageName: page.pageName,
-      PageVisitNumber: page.visitNumber, Screen: page.screen,
-      TaskPhase: page.taskPhase || "", Trial: page.trialNumber || "",
-      Gain: page.gain ?? "", Loss: page.loss ?? "", Fontsize: page.gainLarge ?? "", GainOnLeft: page.gainOnLeft ?? "",
-      PageStartMs: page.start, PageEndMs: page.end ?? "", time_elapsed: end,
-      PageStartUTC: new Date(experimentStartUtc + page.start).toISOString(),
-      PageEndUTC: page.end === null ? "" : new Date(experimentStartUtc + page.end).toISOString(),
-      rt: Math.round((end - page.start) * 1000) / 1000,
-      PageVisibleMs: Math.round((page.visibleMs + (page.visibleSince === null ? 0 : end - page.visibleSince)) * 1000) / 1000,
-      PageComplete: page.end === null ? 0 : 1, PageEndReason: page.endReason,
-      FirstActionRT: page.firstActionRt ?? "", PlannedFixationMs: page.plannedFixationMs ?? "",
-      ViewportWidth: page.viewportWidth, ViewportHeight: page.viewportHeight, DevicePixelRatio: page.devicePixelRatio,
-      EventCount: page.events.length, EventCountsJSON: JSON.stringify(page.counts),
-      QuestionTimingJSON: JSON.stringify(page.questions), EventsJSON: JSON.stringify(page.events)
-    };
-  });
-}
-
-function installActivityTracking() {
-  startPageVisit("welcome", { pageName: "welcome" });
-  const movementEvents = "PointerEvent" in window
-    ? ["pointerdown", "pointerup", "pointermove", "pointercancel"]
-    : ["mousedown", "mouseup", "mousemove"];
-  [...movementEvents, "click", "dblclick", "contextmenu", "wheel", "scroll", "keydown", "keyup", "beforeinput", "input", "change", "focusin", "focusout", "paste", "cut", "copy", "compositionstart", "compositionend", "submit"].forEach((type) => {
-    document.addEventListener(type, captureActivityEvent, { capture: true, passive: true });
-  });
-  document.addEventListener("visibilitychange", () => {
-    recordActivity("visibilitychange", { hidden: document.hidden });
-    if (!currentPageVisit || currentPageVisit.end !== null) return;
-    const now = elapsedMilliseconds();
-    if (currentPageVisit.visibleSince !== null) currentPageVisit.visibleMs += now - currentPageVisit.visibleSince;
-    currentPageVisit.visibleSince = document.hidden ? null : now;
-  });
-  ["focus", "blur", "resize"].forEach((type) => window.addEventListener(type, () => {
-    recordActivity(type, { width: window.innerWidth, height: window.innerHeight });
-    if (type === "blur") heldKeys.clear();
+  return pageVisits.map((page) => ({
+    trial_type: page.pageName, Phase: "page", Subject: subjectId, assignmentId: assignmentId,
+    participantId: participantId, projectId: projectId,
+    ConditionIndex: assignedCondition?.conditionIndex ?? "", ConditionLabel: assignedCondition?.conditionLabel ?? "",
+    StudyStatus: status, Trial: page.trialNumber || "",
+    Gain: page.gain ?? "", Loss: page.loss ?? "", Fontsize: page.gainLarge ?? "", GainOnLeft: page.gainOnLeft ?? "",
+    RT: ((page.end ?? now) - page.start) / 1000, time_elapsed: page.end ?? now
   }));
-  ["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"].forEach((type) => {
-    document.addEventListener(type, () => recordActivity(type, { fullscreen: Boolean(currentFullscreenElement()) }));
-  });
 }
 
 function randomId(length) {
@@ -315,8 +205,8 @@ function setStoredStudyStatus(status, extra = {}) {
     window.localStorage.setItem(studyLockKey, JSON.stringify({
       status,
       timestamp: Date.now(),
-      prolific_pid: prolificPid,
-      study_id: studyId,
+      participantId: participantId,
+      projectId: projectId,
       ...extra
     }));
   } catch (error) {
@@ -455,9 +345,9 @@ function prepareResults() {
     trial_type: "gamble-choice",
     Phase: "choice",
     Subject: subjectId,
-    prolific_pid: prolificPid,
-    study_id: studyId,
-    session_id: sessionId,
+    participantId: participantId,
+    projectId: projectId,
+    assignmentId: assignmentId,
     datapipe_experiment_id: DATAPIPE_EXPERIMENT_ID,
     datapipe_condition_source: assignedCondition.source,
     ConditionIndex: assignedCondition.conditionIndex,
@@ -516,15 +406,6 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
       <h1>Instructions</h1>
       <p>In this game, you will make approximately <strong class="emphasis-red">50 choices</strong> about whether to accept or reject a gamble. You will receive a fixed participation payment of <strong>$2.00</strong> for completing the study and start with a bonus endowment of <strong class="emphasis-red">12 tokens</strong>. Your final token balance will be converted into cash at a rate of <strong class="emphasis-red">1 token = 2 cents</strong> <strong>(or $0.02)</strong>.</p>
       <p>The tokens are used only to determine your bonus and will <strong class="emphasis-red">not</strong> reduce your fixed $2.00 participation payment. Your bonus will typically be around $0.24, making your total payment approximately <strong class="emphasis-red">$2.24 on average</strong>. The bonus will be paid separately through Connect within <strong class="emphasis-red">14 business days</strong> after you complete the study.</p>
-      <button id="instruction-next" class="content-button" type="button">Next</button>
-    `, "instruction-page", { pageName: "instructions_1" });
-    document.getElementById("instruction-next").addEventListener("click", () => showInstructionPage(2));
-    return;
-  }
-
-  if (pageNumber === 2) {
-    showContent(`
-      <h1>Instructions</h1>
       <p>As shown in the figure below, each gamble shows a possible gain, marked with a <strong>“ + ”</strong>, and a possible loss, marked with a <strong>“ - ”</strong>. For each gamble, you have two options: Accept or Reject. If you accept, you have a <strong class="emphasis-red">50%</strong> chance of gaining the number of tokens shown and a <strong class="emphasis-red">50%</strong> chance of losing the number shown. Press the <strong class="key-highlight">“↑”</strong> key to <strong class="key-highlight">accept</strong> the gamble, and press the <strong class="key-highlight">“↓”</strong> key to <strong class="key-highlight">reject</strong> it.</p>
       <p>Please note that the probabilities of winning and losing in each gamble are equal, both being <strong class="emphasis-red">50%</strong>.</p>
       <figure class="instruction-figure instruction-figure-small">
@@ -542,13 +423,9 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
         <li><span class="instruction-underline">You will keep 12 tokens, giving you a <strong>$0.24 bonus</strong> and <strong>$2.24 in total</strong>.</span></li>
       </ul>
       <p class="instruction-section-break">The gain and loss amounts will appear in <strong>different font sizes</strong>, and their <strong>left–right positions</strong> will vary randomly. However, these display formats are completely unrelated to the game rules and will not affect your final payout. There is <strong>no time limit</strong> for each choice.</p>
-      <div class="instruction-navigation">
-        <button id="instruction-back" class="content-button secondary-button" type="button">Back</button>
-        <button id="instruction-next" class="content-button" type="button">Next</button>
-      </div>
-    `, "instruction-page", { pageName: "instructions_2" });
-    document.getElementById("instruction-back").addEventListener("click", () => showInstructionPage(1));
-    document.getElementById("instruction-next").addEventListener("click", () => showInstructionPage(3));
+      <button id="instruction-next" class="content-button" type="button">Next</button>
+    `, "instruction-page", { pageName: "instructions_1" });
+    document.getElementById("instruction-next").addEventListener("click", () => showInstructionPage(2));
     return;
   }
 
@@ -571,8 +448,8 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
       <button id="instruction-back" class="content-button secondary-button" type="button">Back</button>
       <button id="comprehension-next" class="content-button" type="button">Next</button>
     </div>
-  `, "instruction-page", { pageName: "instructions_3" });
-  document.getElementById("instruction-back").addEventListener("click", () => showInstructionPage(2));
+  `, "instruction-page", { pageName: "instructions_2" });
+  document.getElementById("instruction-back").addEventListener("click", () => showInstructionPage(1));
   document.getElementById("comprehension-next").addEventListener("click", showComprehensionTest);
 }
 
@@ -713,7 +590,6 @@ function showComprehensionTest() {
       response,
       rtMilliseconds: Math.round(performance.now() - pageStart)
     });
-    recordActivity("comprehension_result", comprehensionRecords[comprehensionRecords.length - 1]);
 
     if (comprehensionPassed) {
       runTask().catch(handleUnexpectedError);
@@ -740,7 +616,7 @@ async function runTrial(trial, resultRow = null) {
   const trialNumber = resultRow ? resultRow.Trial : practiceResults.length + 1;
   const trialDetails = { taskPhase, trialNumber, ...trial };
   const row = resultRow || {
-    trial_type: "gamble-practice", Phase: "practice", Subject: subjectId, session_id: sessionId,
+    trial_type: "gamble-practice", Phase: "practice", Subject: subjectId, assignmentId: assignmentId,
     Trial: trialNumber, Gain: trial.gain, Loss: trial.loss, Fontsize: trial.gainLarge, GainOnLeft: trial.gainOnLeft,
     Choice: "", RT: "", KeyResponse: ""
   };
@@ -748,13 +624,11 @@ async function runTrial(trial, resultRow = null) {
   const fixationDuration = 2000 + randomUnit() * 1000;
   phase = "fixation";
   showScreen("fixation", { pageName: `${taskPhase}_fixation`, plannedFixationMs: fixationDuration, ...trialDetails });
-  row.FixationPageVisitID = currentPageVisit.id;
   await sleep(fixationDuration);
   if (aborted) return;
 
   phase = "response";
   drawStimulus(trial, { pageName: `${taskPhase}_response`, ...trialDetails });
-  row.PageVisitID = currentPageVisit.id;
   const startedAt = performance.now();
   const code = await waitForKey(["ArrowUp", "ArrowDown"]);
   if (aborted) return;
@@ -765,7 +639,6 @@ async function runTrial(trial, resultRow = null) {
   row.Choice = code === "ArrowUp" ? 1 : 0;
   row.response = code;
   row.time_elapsed = elapsedMilliseconds();
-  recordActivity("decision_response", { response: code, choice: row.Choice, decisionRtMs: row.rt });
 
   showScreen("message", { pageName: "inter_trial", ...trialDetails });
   messageElement.textContent = "";
@@ -823,7 +696,7 @@ async function practiceInstructionAndWait() {
   showContent(`
     <div class="practice-intro-copy">
       <p>You will now complete three practice trials.<br>These trials will not affect your bonus.</p>
-      <p>Press <strong>↑</strong> to accept and <strong>↓</strong> to reject.</p>
+      <p class="practice-key-reminder">Press <strong>“ ↑ ”</strong> to accept and <strong>“ ↓ ”</strong> to reject.</p>
       <p>Press the “SPACEBAR” when you are ready to continue.</p>
     </div>
   `, "practice-intro-page");
@@ -953,7 +826,6 @@ async function postTaskQuestionsAndWait() {
       familiarityWarning.style.display = validFamiliarity ? "none" : "block";
       strategyWarning.style.display = validStrategy ? "none" : "block";
       strategyInput.setAttribute("aria-invalid", String(!validStrategy));
-      recordActivity("post_task_submit", { valid: validRisk && validRating && validFamiliarity && validStrategy, response: { ...postTaskResponses } });
       if (!validRisk || !validRating || !validFamiliarity || !validStrategy) {
         if (!validRisk) form.querySelector('input[name="risk_willingness"]').focus();
         else if (!validRating) form.querySelector('input[name="font_size_rating"]').focus();
@@ -975,15 +847,12 @@ function completeStudyAfterSave() {
   setStoredStudyStatus("completed", {
     selected_trial: paymentResult.trialNumber,
     final_tokens: paymentResult.finalTokens,
-    bonus_cents: paymentResult.bonusCents,
-    participation_payment_cents: paymentResult.participationPaymentCents,
-    final_cents: paymentResult.finalCents,
-    total_payment_cents: paymentResult.totalPaymentCents
+    bonus_dollars: paymentResult.bonusDollars
   });
   showPaymentResult();
 }
 
-function showDataPipeSaveFailure(completionOnly = false) {
+function showDataPipeSaveFailure() {
   const validationRejected = dataPipeSaveError?.code === "INVALID_DATA";
   const recoveryMessage = validationRejected
     ? "Please keep this page open and contact the researcher. The study's online storage rejected the data. Select Retry after the researcher has corrected the storage validation settings. You can also download a backup copy if needed."
@@ -1011,13 +880,12 @@ function showDataPipeSaveFailure(completionOnly = false) {
     const button = event.currentTarget;
     button.disabled = true;
     button.textContent = "Saving...";
-    const saved = await saveToDataPipe("completed", completionOnly);
+    const saved = await saveToDataPipe("completed");
     if (aborted) return;
     if (saved) {
-      if (completionOnly) finishAfterCompletionSave();
-      else completeStudyAfterSave();
+      completeStudyAfterSave();
     } else {
-      showDataPipeSaveFailure(completionOnly);
+      showDataPipeSaveFailure();
     }
   });
 }
@@ -1077,24 +945,26 @@ function paymentGambleHtml(trial) {
 function showPaymentResult() {
   const result = paymentResult;
   let outcomeExplanation;
+  let bonusCalculation;
   if (!result.accepted) {
-    outcomeExplanation = `<p>You chose <strong>Reject</strong>, so the selected gamble was not played. You keep your initial endowment of ${INITIAL_ENDOWMENT} tokens.</p>`;
+    outcomeExplanation = `<p>You chose <strong>Reject</strong>.<br>The selected gamble was not played. You keep your initial endowment of ${INITIAL_ENDOWMENT} tokens.</p>`;
+    bonusCalculation = `${INITIAL_ENDOWMENT} tokens`;
   } else if (result.outcome === "gain") {
-    outcomeExplanation = `<p>You chose <strong>Accept</strong>. The computer performed a fair 50/50 draw, and the <strong>gain</strong> outcome was selected.</p><p>${INITIAL_ENDOWMENT} + ${result.trial.gain} = <strong>${result.finalTokens} tokens</strong>.</p>`;
+    outcomeExplanation = `<p>You chose <strong>Accept</strong>.<br>The computer performed a fair 50/50 draw. The coin landed heads, so you <strong>gain ${result.trial.gain} tokens</strong>.</p>`;
+    bonusCalculation = `${INITIAL_ENDOWMENT} + ${result.trial.gain} = ${result.finalTokens} tokens`;
   } else {
-    outcomeExplanation = `<p>You chose <strong>Accept</strong>. The computer performed a fair 50/50 draw, and the <strong>loss</strong> outcome was selected.</p><p>${INITIAL_ENDOWMENT} − ${result.trial.loss} = <strong>${result.finalTokens} tokens</strong>.</p>`;
+    outcomeExplanation = `<p>You chose <strong>Accept</strong>.<br>The computer performed a fair 50/50 draw. The coin landed tails, so you <strong>lose ${result.trial.loss} tokens</strong>.</p>`;
+    bonusCalculation = `${INITIAL_ENDOWMENT} − ${result.trial.loss} = ${result.finalTokens} tokens`;
   }
 
   showContent(`
     <h1>Payment Result</h1>
-    <p>The computer randomly selected <strong>Round ${result.trialNumber}</strong> from the 49 rounds to determine your payment.</p>
+    <p>The computer randomly selected <strong>Round ${result.trialNumber}</strong> from the 49 rounds to determine your bonus.</p>
     ${paymentGambleHtml(result.trial)}
     <div class="payment-summary">
       ${outcomeExplanation}
-      <p>Your bonus is ${result.finalTokens} tokens = ${result.bonusCents} cents ($${result.bonusDollars}).</p>
-      <p>Your fixed participation payment is $${result.participationPaymentDollars}.</p>
-      <p class="payment-total">Your total payment is $${result.totalPaymentDollars}.</p>
-      <p>Your bonus will be paid separately through Connect within <strong>14 business days</strong> after you complete the study.</p>
+      <p><strong>Your bonus</strong> is ${bonusCalculation} = <strong>${result.bonusCents} cents ($${result.bonusDollars})</strong>.</p>
+      <p>Your total payment is $${result.totalPaymentDollars}. And your bonus will be paid separately within <strong>14 business days</strong>.</p>
     </div>
     <button id="finish-study" class="content-button" type="button">Finish</button>
   `, "result-page");
@@ -1138,9 +1008,9 @@ function summaryOnlyRow(status) {
     trial_type: "session-summary",
     Phase: "summary",
     Subject: subjectId,
-    prolific_pid: prolificPid,
-    study_id: studyId,
-    session_id: sessionId,
+    participantId: participantId,
+    projectId: projectId,
+    assignmentId: assignmentId,
     datapipe_experiment_id: DATAPIPE_EXPERIMENT_ID,
     datapipe_condition_source: assignedCondition ? assignedCondition.source : "",
     ConditionIndex: assignedCondition ? assignedCondition.conditionIndex : "",
@@ -1193,16 +1063,11 @@ function csvValue(value) {
   return `"${stringValue.replaceAll('"', '""')}"`;
 }
 
-function buildCsv(status, completionOnly = false) {
-  const rows = completionOnly
-    ? [{ ...summaryOnlyRow(status), trial_type: "session-completion" }, ...activityRows(status, mainSavedPageCount)]
-    : exportRows(status);
-  // Union is essential: page/practice rows have fields not present in choice rows.
-  // trial_type is also present for early exits with no completed decisions.
-  const columns = [...new Set(["trial_type", ...rows.flatMap((row) => Object.keys(row))])];
+function buildCsv(status) {
+  const rows = exportRows(status);
   return [
-    columns.map(csvValue).join(","),
-    ...rows.map((row) => columns.map((column) => csvValue(row[column])).join(","))
+    CSV_COLUMNS.map(csvValue).join(","),
+    ...rows.map((row) => CSV_COLUMNS.map((column) => csvValue(row[column])).join(","))
   ].join("\r\n");
 }
 
@@ -1224,15 +1089,14 @@ function downloadData(status) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function saveToDataPipe(status, completionOnly = false) {
-  // Serialize saves: a fullscreen exit during an upload must not race another
-  // request to the same filename. Late termination events use the supplement.
-  uploadQueue = uploadQueue.catch(() => false).then(() => uploadToDataPipe(status, completionOnly || (status !== "completed" && dataPipeSaved)));
+function saveToDataPipe(status) {
+  // Serialize retries to prevent concurrent writes to the same filename.
+  uploadQueue = uploadQueue.catch(() => false).then(() => uploadToDataPipe(status));
   return uploadQueue;
 }
 
-async function uploadToDataPipe(status, completionOnly = false) {
-  if (completionOnly ? completionDataSaved : dataPipeSaved) return true;
+async function uploadToDataPipe(status) {
+  if (dataPipeSaved) return true;
   dataPipeSaveError = null;
   if (!isDataPipeConfigured()) {
     dataPipeSaveError = { code: "DATAPIPE_NOT_CONFIGURED", message: "The study's online data storage has not been configured. Please contact the researcher." };
@@ -1241,12 +1105,9 @@ async function uploadToDataPipe(status, completionOnly = false) {
 
   const requestBody = JSON.stringify({
     experimentID: DATAPIPE_EXPERIMENT_ID,
-    filename: completionOnly ? dataFilename.replace(/\.csv$/, "_completion.csv") : dataFilename,
-    data: buildCsv(status, completionOnly)
+    filename: dataFilename,
+    data: buildCsv(status)
   });
-  // The open saving page is included again, with its final duration, in the
-  // completion file. PageVisitID links the two snapshots without losing events.
-  const closedPageCount = pageVisits.filter((page) => page.end !== null).length;
   const requestBytes = new Blob([requestBody]).size;
   try {
     let body = requestBody;
@@ -1258,7 +1119,7 @@ async function uploadToDataPipe(status, completionOnly = false) {
     }
     const uploadBytes = typeof body === "string" ? requestBytes : body.byteLength;
     if (uploadBytes >= 30 * 1024 * 1024) {
-      dataPipeSaveError = { code: "PAYLOAD_TOO_LARGE", message: "The detailed activity log is too large to upload in this browser. Please download a backup copy and contact the researcher. Your data have not been discarded." };
+      dataPipeSaveError = { code: "PAYLOAD_TOO_LARGE", message: "The data file is too large to upload in this browser. Please download a backup copy and contact the researcher. Your data have not been discarded." };
       return false;
     }
     const response = await fetch("https://pipe.jspsych.org/api/data/", {
@@ -1284,16 +1145,14 @@ async function uploadToDataPipe(status, completionOnly = false) {
         console.error("Check this experiment's Data Validation settings: the file format is CSV; every required field must match an exported column (including case).", {
           format: "CSV",
           rowCount: rows.length,
-          columns: Object.keys(rows[0])
+          columns: CSV_COLUMNS
         });
       }
       return false;
     }
-    if (completionOnly) completionDataSaved = true;
-    else {
-      dataPipeSaved = true;
-      mainSavedPageCount = closedPageCount;
-    }
+    dataPipeSaved = true;
+    closePageVisit();
+    activityStopped = true;
     return true;
   } catch (error) {
     dataPipeSaveError = {
@@ -1316,7 +1175,7 @@ function excludeForComprehension(incorrectQuestions) {
   showContent(`
     <h1>The study has ended.</h1>
     <div class="termination-warning"><strong>Based on your comprehension-test responses, you are not eligible to continue this study.</strong><p>You answered Question${incorrectQuestions.length > 1 ? "s" : ""} ${incorrectQuestions.join(", ")} incorrectly on your second attempt.</p></div>
-    <p>Please return this study on Prolific. Do not submit a completion code.</p>
+    <p>Please return this study on Connect. Do not submit a completion code.</p>
     <button id="excluded-exit" class="content-button" type="button">Exit</button>
   `, "end-page");
   phase = "excluded";
@@ -1335,7 +1194,6 @@ function handleFullscreenChange() {
       const storedStatus = getStoredStudyStatus();
       if (storedStatus && storedStatus.status === "completed") {
         closePageVisit("fullscreen_exit_after_result");
-        void saveToDataPipe("completed", true);
         fullscreenAbortArmed = false;
         showLockedStatus(storedStatus);
         return;
@@ -1356,7 +1214,7 @@ function handleFullscreenChange() {
       showContent(`
         <h1>The study has ended.</h1>
         <div class="termination-warning"><strong>You exited fullscreen mode during the study.</strong></div>
-        <p>Please return this study on Prolific. Do not submit a completion code.</p>
+        <p>Please return this study on Connect. Do not submit a completion code.</p>
       `, "end-page");
       phase = "terminated";
     }, 250);
@@ -1372,36 +1230,32 @@ function showLockedStatus(statusRecord) {
     <div class="${completed ? "" : "termination-warning"}">
       <strong>${completed ? "Thank you for completing this study." : "You are not eligible to continue this study."}</strong>
     </div>
-    ${completed ? "" : "<p>Please return this study on Prolific. Do not submit a completion code.</p>"}
+    ${completed ? "" : "<p>Please return this study on Connect. Do not submit a completion code.</p>"}
   `, "end-page");
   phase = "locked";
 }
 
-async function finishStudy() {
-  if (phase !== "result" || completionSavePending) return;
-  completionSavePending = true;
-  recordActivity("finish_requested");
-  closePageVisit("finish");
-  showContent("<h2>Saving your data...</h2><p>Please do not close this page.</p>", "loading-page");
-  const saved = await saveToDataPipe("completed", true);
-  completionSavePending = false;
-  if (aborted) return;
-  if (!saved) {
-    showDataPipeSaveFailure(true);
-    return;
-  }
-  finishAfterCompletionSave();
-}
-
-function finishAfterCompletionSave() {
+function finishStudy() {
+  if (phase !== "result" || aborted || !dataPipeSaved) return;
   closePageVisit("completed");
   activityStopped = true;
   phase = "finished";
   plannedFullscreenExit = true;
   fullscreenAbortArmed = false;
   exitFullscreen().catch(() => {});
-  showContent("<h1>Your response has been saved.</h1><p>Thank you for completing this study.</p>", "end-page");
+  showContent(`
+    <h1>Your response has been saved.</h1>
+    <p>Thank you for completing this study.</p>
+    <p>Your completion code is:</p>
+    <p class="completion-code">${CONNECT_COMPLETION_CODE}</p>
+    <p>You will be redirected to Connect in 10 seconds. If you need to submit manually, please use the completion code above.</p>
+    <p><a id="return-to-connect">Return to Connect now</a></p>
+  `, "end-page");
   phase = "finished";
+  document.getElementById("return-to-connect").href = CONNECT_COMPLETION_URL;
+  window.setTimeout(() => {
+    if (phase === "finished") window.location.assign(CONNECT_COMPLETION_URL);
+  }, 10000);
 }
 
 function handleUnexpectedError(error) {
@@ -1454,14 +1308,14 @@ fullscreenStartButton.addEventListener("click", async () => {
     showContent(`
       <h1>Screen size too small</h1>
       <div class="termination-warning"><strong>This study requires a fullscreen display of at least ${MIN_FULLSCREEN_WIDTH} × ${MIN_FULLSCREEN_HEIGHT} pixels.</strong></div>
-      <p>Please return the study on Prolific and do not submit a completion code.</p>
+      <p>Please return the study on Connect and do not submit a completion code.</p>
       <p>Detected fullscreen size: ${window.innerWidth} × ${window.innerHeight}</p>
     `, "end-page");
     exitFullscreen().catch(() => {});
     return;
   }
 
-  setStoredStudyStatus("in_progress", { session_id: sessionId });
+  setStoredStudyStatus("in_progress", { assignmentId: assignmentId });
   try {
     const ready = await assignConditionAndPrepareTrials();
     if (ready && !aborted) showInstructionPage(1);
@@ -1482,11 +1336,9 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("beforeunload", () => {
-  recordActivity("beforeunload");
   pageIsUnloading = true;
 });
 window.addEventListener("pagehide", () => {
-  recordActivity("pagehide");
   closePageVisit("pagehide");
   pageIsUnloading = true;
 });
@@ -1495,7 +1347,7 @@ document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
 document.addEventListener("mozfullscreenchange", handleFullscreenChange);
 document.addEventListener("MSFullscreenChange", handleFullscreenChange);
 
-installActivityTracking();
+startPageVisit("welcome", { pageName: "welcome" });
 const storedStatus = getStoredStudyStatus();
 if (isLockedStudyStatus(storedStatus)) {
   showLockedStatus(storedStatus);

@@ -509,7 +509,7 @@ input:focus-visible {
   display: inline-block;
   padding: 0.05em 0.2em;
   background: var(--task-background);
-  color: var(--task-stimulus);
+  color: #000000;
   font-size: 1.1em;
   font-weight: 700;
   white-space: nowrap;
@@ -594,6 +594,10 @@ body.task-mode {
   margin-bottom: 0;
 }
 
+.practice-intro-copy .practice-key-reminder {
+  padding-block: 1em;
+}
+
 .loading-page,
 .end-page,
 .result-page {
@@ -608,7 +612,7 @@ body.task-mode {
 
 .payment-gamble {
   position: relative;
-  width: min(700px, 100%);
+  width: min(560px, 100%);
   aspect-ratio: 16 / 7;
   margin: 24px auto 28px;
   overflow: hidden;
@@ -637,11 +641,18 @@ body.task-mode {
 }
 
 .payment-value.large {
-  font-size: clamp(130px, 21vw, 260px);
+  font-size: clamp(104px, 16.8vw, 208px);
 }
 
 .payment-value.small {
-  font-size: clamp(64px, 10vw, 120px);
+  font-size: clamp(51px, 8vw, 96px);
+}
+
+.completion-code {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  user-select: all;
 }
 
 .payment-summary {
