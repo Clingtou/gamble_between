@@ -761,7 +761,7 @@ async function postTaskQuestionsAndWait() {
         <div id="familiarity-required" class="question-required" role="alert">Please select one option.</div>
       </div>
       <div class="form-question">
-        <div class="question-text"><label for="decision-strategy">4. What strategy did you use when deciding whether to accept or reject the gambles?</label></div>
+        <div class="question-text"><label for="decision-strategy">4. What strategy did you use when deciding whether to accept or reject the gambles? <strong class="strategy-issue-note">(If you encountered any issues during the study, please also describe them here.)</strong></label></div>
         <p id="strategy-instruction">Please describe your strategy in at least ${MIN_STRATEGY_WORDS} words.</p>
         <textarea id="decision-strategy" class="post-task-strategy" name="decision_strategy" rows="6" required aria-describedby="strategy-instruction strategy-word-count strategy-required"></textarea>
         <p id="strategy-word-count" class="post-task-word-count" aria-live="polite">0 words (minimum: ${MIN_STRATEGY_WORDS})</p>

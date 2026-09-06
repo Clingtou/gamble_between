@@ -348,6 +348,11 @@ input:focus-visible {
   line-height: 1.45;
 }
 
+.strategy-issue-note {
+  color: #505050;
+  font-weight: 700;
+}
+
 .single-choice-list {
   display: grid;
   max-width: 920px;
@@ -394,7 +399,7 @@ input:focus-visible {
 }
 
 .post-task-scale {
-  max-width: 640px;
+  width: 100%;
 }
 
 .post-task-scale-anchors {
@@ -577,12 +582,16 @@ body.task-mode {
   color: var(--task-instruction);
 }
 
-.practice-intro-copy {
-  width: min(1000px, 100%);
-  text-align: center;
+.practice-intro-copy,
+.message.main-intro-message {
   font-family: "Times New Roman", Times, serif;
   font-size: clamp(24px, 2.2vw, 42px);
   font-weight: 700;
+}
+
+.practice-intro-copy {
+  width: min(1000px, 100%);
+  text-align: center;
   line-height: 1.485;
 }
 
