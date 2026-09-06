@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta name="color-scheme" content="only light">
+  <title>Gamble Task</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="experiment" aria-live="polite">
+    <section id="welcome-screen" class="screen welcome-screen">
+      <div class="welcome-shell">
+        <div class="fullscreen-message">
+          <h2>Welcome to the Study</h2>
+          <p>The purpose of this study is to examine how people make economic decisions. Your careful participation is very important to us.</p>
+          <p>This study does not involve any foreseeable risks or sensitive content. All personal data collected in this study will be used for research purposes only and will not be used for any commercial purposes. Your responses will be analyzed anonymously.</p>
+          <p>Your participation is voluntary. You have the right to withdraw from the study at any time.</p>
+          <p>This study must be completed on a <strong>desktop</strong> or <strong>laptop computer</strong>. Please enter fullscreen mode to begin. <span class="fullscreen-warning">If you exit fullscreen mode before the study ends, the study will stop automatically.</span></p>
+          <p>By checking the box below and continuing, you confirm that you have read the information above and agree to participate in this study.</p>
+          <label class="fullscreen-consent">
+            <input id="ethics-consent" type="checkbox">
+            <span>I acknowledge the information above and agree to participate in this study.</span>
+          </label>
+        </div>
+        <button id="fullscreen-start" class="welcome-button is-disabled" type="button" disabled>Enter fullscreen and start</button>
+        <p id="welcome-error" class="welcome-error" role="alert"></p>
+      </div>
+    </section>
+
+    <section id="content-screen" class="screen content-screen hidden">
+      <div id="content" class="content-page"></div>
+    </section>
+
+    <section id="message-screen" class="screen hidden">
+      <div id="message" class="message"></div>
+    </section>
+
+    <section id="fixation-screen" class="screen hidden" aria-label="Fixation">
+      <div class="fixation-dot"></div>
+    </section>
+
+    <section id="stimulus-screen" class="screen hidden" aria-label="Gamble choice">
+      <div id="left-stimulus" class="stimulus"></div>
+      <div id="right-stimulus" class="stimulus"></div>
+    </section>
+  </main>
+
+  <script src="experiment.js"></script>
+</body>
+</html>
