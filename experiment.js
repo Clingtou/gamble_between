@@ -91,6 +91,7 @@ let aborted = false;
 let activeWait = null;
 let fullscreenAbortArmed = false;
 let plannedFullscreenExit = false;
+let practiceHasStarted = false;
 let pageIsUnloading = false;
 let fullscreenExitTimer = null;
 let dataDownloaded = false;
@@ -431,6 +432,7 @@ function showInstructionPage(pageNumber, incorrectQuestions = []) {
 
   showContent(`
     <h1>Instructions</h1>
+    <p>In the formal task, all gain and loss amounts will range from 3 to 9 tokens.</p>
     <p>Before each gamble appears, a circular fixation point (as shown below) will be displayed in the center of the screen for a random period of 2–3 seconds. Please look at the fixation point without pressing any key. The gamble will then appear automatically.</p>
     <figure class="fixation-figure">
       <svg class="fixation-demo" xmlns="http://www.w3.org/2000/svg" width="400" height="225" viewBox="0 0 400 225" role="img" aria-label="A white circular fixation point in the center of a gray background with a 16:9 aspect ratio.">
@@ -703,7 +705,11 @@ async function practiceInstructionAndWait() {
   phase = "practice_intro";
   await sleep(200);
   if (aborted) return false;
-  await waitForKey(["Space"]);
+  const code = await waitForKey(["Space"]);
+  if (code === "Space" && !aborted) {
+    practiceHasStarted = true;
+    setStoredStudyStatus("in_progress", { assignmentId: assignmentId });
+  }
   return !aborted;
 }
 
@@ -1190,11 +1196,35 @@ function excludeForComprehension(incorrectQuestions) {
   });
 }
 
+function showPrepracticeRecovery(message) {
+  fullscreenAbortArmed = false;
+  plannedFullscreenExit = true;
+  aborted = true;
+  closePageVisit();
+  if (activeWait) {
+    const { resolve } = activeWait;
+    activeWait = null;
+    resolve("Escape");
+  }
+  showContent(`
+    <h1>You can still take part.</h1>
+    <div class="termination-warning"><strong>${message}</strong></div>
+    <p>Please adjust your display if needed, then restart the study. Once the practice trials have begun, exiting fullscreen mode will end the study and it cannot be continued.</p>
+    <button id="restart-study" class="content-button" type="button">Restart study</button>
+  `, "end-page");
+  phase = "prepractice_recovery";
+  document.getElementById("restart-study").addEventListener("click", () => window.location.reload());
+}
+
 function handleFullscreenChange() {
   if (fullscreenAbortArmed && !plannedFullscreenExit && !currentFullscreenElement()) {
     if (fullscreenExitTimer) window.clearTimeout(fullscreenExitTimer);
     fullscreenExitTimer = window.setTimeout(() => {
       if (pageIsUnloading || plannedFullscreenExit || currentFullscreenElement() || !fullscreenAbortArmed) return;
+      if (!practiceHasStarted) {
+        showPrepracticeRecovery("Fullscreen mode was exited before the practice trials began.");
+        return;
+      }
       const storedStatus = getStoredStudyStatus();
       if (storedStatus && storedStatus.status === "completed") {
         closePageVisit("fullscreen_exit_after_result");
@@ -1309,17 +1339,14 @@ fullscreenStartButton.addEventListener("click", async () => {
   if (window.innerWidth < MIN_FULLSCREEN_WIDTH || window.innerHeight < MIN_FULLSCREEN_HEIGHT) {
     fullscreenAbortArmed = false;
     plannedFullscreenExit = true;
-    showContent(`
-      <h1>Screen size too small</h1>
-      <div class="termination-warning"><strong>This study requires a fullscreen display of at least ${MIN_FULLSCREEN_WIDTH} × ${MIN_FULLSCREEN_HEIGHT} pixels.</strong></div>
-      <p>Please return the study on Connect and do not submit a completion code.</p>
-      <p>Detected fullscreen size: ${window.innerWidth} × ${window.innerHeight}</p>
-    `, "end-page");
-    exitFullscreen().catch(() => {});
+    await exitFullscreen().catch(() => {});
+    showPrepracticeRecovery(`This study requires a fullscreen display of at least ${MIN_FULLSCREEN_WIDTH} × ${MIN_FULLSCREEN_HEIGHT} pixels. Detected fullscreen size: ${window.innerWidth} × ${window.innerHeight}.`);
     return;
   }
 
-  setStoredStudyStatus("in_progress", { assignmentId: assignmentId });
+  // A participant may safely restart before practice begins. The permanent
+  // in-progress lock is set only when they press SPACEBAR to start practice.
+  setStoredStudyStatus("prepractice", { assignmentId: assignmentId });
   try {
     const ready = await assignConditionAndPrepareTrials();
     if (ready && !aborted) showInstructionPage(1);
@@ -1355,4 +1382,6 @@ startPageVisit("welcome", { pageName: "welcome" });
 const storedStatus = getStoredStudyStatus();
 if (isLockedStudyStatus(storedStatus)) {
   showLockedStatus(storedStatus);
+} else if (storedStatus && storedStatus.status === "prepractice") {
+  welcomeError.textContent = "This study was restarted before the practice trials began. You may enter fullscreen mode again. Once practice begins, do not exit fullscreen mode, or the study cannot continue.";
 }
